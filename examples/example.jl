@@ -6,7 +6,7 @@ using BenchmarkTools
 # Define path
 f(t) = [t, 2t]
 ts = range(0, stop=1, length=100)  # 9 segments, 10 points
-m = 5
+m = 7
 d = length(f(0.0))
 
 # Julia: N-point signature via Chen
