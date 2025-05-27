@@ -71,23 +71,27 @@ function chen_product!(out::Vector{T}, x1::Vector{T}, x2::Vector{T}, d::Int, m::
     return out
 end
 
-function full_signature(f, ts::Vector{Float64}, m::Int)
-    d = length(f(0.0))
-    segs = map(1:length(ts)-1) do i
-        segment_signature(f, ts[i], ts[i+1], m)
+function signature_path(f, ts::AbstractVector{<:Real}, m::Int)
+    d = length(f(ts[1]))
+    T = eltype(f(ts[1]))
+
+    # Number of signature terms (excluding level 0)
+    total_terms = div(d^(m + 1) - d, d - 1)
+
+    # Compute signature of first segment
+    sig = segment_signature(f, ts[1], ts[2], m)
+
+    # Use a scratch buffer for chen_product!
+    buf = Vector{T}(undef, total_terms)
+
+    for i in 2:length(ts)-1
+        sig_next = segment_signature(f, ts[i], ts[i+1], m)
+        chen_product!(buf, sig, sig_next, d, m)
+        sig, buf = buf, sig  # swap buffers
     end
 
-    total_terms = div(d^(m+1) - 1, d - 1)
-    result = copy(segs[1])  # will be overwritten in-place
-
-    for i in 2:length(segs)
-        buf = similar(result)
-        chen_product!(buf, result, segs[i], d, m)
-        result .= buf
-    end
-    return result
+    return sig
 end
-
 
 function segment_signature_three_points(f, a, b, c, m)
     d = length(f(0.0))
@@ -126,27 +130,25 @@ end
 
 ####
 
+# Define path
 f(t) = [t, 2t]
-a, b, c = 0.0, 0.4, 1.0
-m = 20
+ts = range(0, stop=1, length=10)  # 9 segments, 10 points
+m = 10
 d = length(f(0.0))
 
-# Julia: via Chen identity
-sig_julia = segment_signature_three_points(f, a, b, c, m)
+# Julia: N-point signature via Chen
+sig_julia = signature_path(f, ts, m)
 
-# Python: full path
-x0 = f(a)
-x1 = f(b)
-x2 = f(c)
-path = vcat(x0', x1', x2')   # (3, d)
+# Python: full path signature
+path = reduce(vcat, [f(t)' for t in ts])  # Matrix (10, d) flattened row-wise
 path_np = np.asarray(path; order="C")
 sig_py = iisignature.sig(path_np, m)
 sig_py_julia = pyconvert(Vector{Float64}, sig_py)
 
-# ✅ Validate
+# ✅ Validate match
 @assert isapprox(sig_julia, sig_py_julia; atol=1e-12)
 
 # 🕒 Benchmark
 println("Benchmarking:")
-@btime segment_signature_three_points($f, $a, $b, $c, $m)
+@btime signature_path($f, $ts, $m)
 @btime $iisignature.sig($path_np, $m)
