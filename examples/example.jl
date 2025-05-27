@@ -4,8 +4,10 @@ using Revise, PathSignatures, PythonCall
 using BenchmarkTools
 
 # Define path
-f(t) = [t, 2t]
-ts = range(0, stop=1, length=100)  # 9 segments, 10 points
+using StaticArrays
+f(t) = @SVector [t, 2t]
+
+ts = range(0, stop=1, length=1000)  # 9 segments, 10 points
 m = 7
 d = length(f(0.0))
 

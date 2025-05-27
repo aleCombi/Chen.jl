@@ -40,7 +40,7 @@ function segment_signature!(out::Vector{T}, f, a, b, m::Int, buffer::Vector{T}) 
     end
 end
 
-function chen_product!(out::Vector{T}, x1::Vector{T}, x2::Vector{T}, d::Int, m::Int, offsets::Vector{Int}) where T
+@inline function chen_product!(out::Vector{T}, x1::Vector{T}, x2::Vector{T}, d::Int, m::Int, offsets::Vector{Int}) where T
     for k in 1:m
         out_k = view(out, offsets[k]+1 : offsets[k+1])
         fill!(out_k, 0)
