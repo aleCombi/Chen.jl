@@ -129,4 +129,8 @@ function signature_path(path::Vector{SVector{D,T}}, m::Int) where {D, T}
     return a
 end
 
+include("tensor_algebra.jl") 
+include("vol_signature.jl")
+include("tensor_conversions.jl")
+
 end # module PathSignatures
