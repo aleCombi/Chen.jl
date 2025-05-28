@@ -1,4 +1,4 @@
-using Symbolics, StochasticDiffEq, DiffEqFinancial, PathSignatures, StaticArrays
+using Symbolics, StochasticDiffEq, DiffEqFinancial, PathSignatures, StaticArrays, LinearAlgebra
 
 function augment_brownian(times::Vector{Float64}, W::Vector{Float64})
     @assert length(times) == length(W) "Time and Brownian vectors must have same length"
@@ -24,6 +24,9 @@ augmented_brownian = augment_brownian(ou_sol.W.t, ou_sol.W.u)
 simulated_ou = ou_sol.u
 
 max_order = 5
-signature_vals = [1.0; signature_path(augmented_brownian, max_order)]
-tensor_ou = ornstein_uhlenbeck_time_dependent(x0, κ, θ, η, 2, max_order=max_order)
-flat_tensor_ou = tensor_to_vector(tensor_ou, standard_word_map(max_order, 2))
+signature_vals = [vcat([1.0], signature_path(augmented_brownian[1:i], max_order)) for i in 2:length(augmented_brownian)]
+tensor_ou = [ornstein_uhlenbeck_time_dependent(x0, κ, θ, η, t, max_order=max_order) for t in ou_sol.W.t[2:end]]
+flat_tensor_ou = [tensor_to_vector(tensor, standard_word_map(max_order, 2)) for tensor in tensor_ou]
+
+# Compute bracket for each time step
+bracket_results = [dot(sig_vec, flat_tensor_vec) for (sig_vec, flat_tensor_vec) in zip(signature_vals, flat_tensor_ou)]
