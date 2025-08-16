@@ -1,4 +1,6 @@
-using Revise, PythonCall, BenchmarkTools, StaticArrays, PathSignatures
+using Revise, PythonCall, BenchmarkTools, StaticArrays, PathSignatures, CondaPkg
+CondaPkg.add_pip("numpy")
+CondaPkg.add_pip("iisignature")
 @py import iisignature
 @py import numpy as np
 
@@ -28,7 +30,7 @@ sig_py = iisignature.sig(path_np, m)
 sig_py_julia = pyconvert(Vector{Float64}, sig_py)
 
 # ✅ Validate match
-@assert isapprox(sig_julia_vec,  sig_py_julia; atol=1e-6)
+@assert isapprox(sig_julia_vec.coeffs,  sig_py_julia; atol=1e-6)
 
 # 🕒 Benchmark
 println("Benchmarking:")

@@ -3,4 +3,5 @@ numpy = ""
 python = "=3.8"
 
 [pip.deps]
+numpy = ""
 iisignature = ""

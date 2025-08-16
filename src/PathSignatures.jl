@@ -3,7 +3,20 @@ module PathSignatures
 using StaticArrays
 using LoopVectorization: @avx
 
-export signature_path, signature_words, all_signature_words
+export TensorSeries, signature_path, signature_words, all_signature_words
+
+# ---------------- types ----------------
+
+struct TensorSeries{T}
+    coeffs::Vector{T}   # flat coefficients in tensor basis
+    dim::Int            # ambient dimension
+    level::Int          # truncation level
+end
+
+Base.length(ts::TensorSeries) = length(ts.coeffs)
+Base.getindex(ts::TensorSeries, i::Int) = ts.coeffs[i]
+Base.show(io::IO, ts::TensorSeries) =
+    print(io, "TensorSeries(dim=$(ts.dim), level=$(ts.level), length=$(length(ts)))")
 
 # ---------------- utilities ----------------
 
@@ -21,7 +34,8 @@ end
     out::StridedVector{T}, Δ::StridedVector{T}, scale::T,
     prev_start::Int, prev_len::Int, cur_start::Int
 ) where {T}
-    @inbounds for i in 1:length(Δ)
+    d = length(Δ)
+    @inbounds for i in 1:d
         s = scale * Δ[i]
         base = cur_start + (i - 1) * prev_len
         # long inner loop → AVX helps
@@ -32,7 +46,6 @@ end
     return nothing
 end
 
-# zero a contiguous slice without creating a view
 @inline function _zero_range!(x::StridedVector{T}, start::Int, len::Int) where {T}
     @inbounds @simd for u in 1:len
         x[start + u - 1] = zero(T)
@@ -49,8 +62,7 @@ function segment_signature!(
     @assert length(b) == d
     @assert length(buffer) >= d
 
-    # displacement in buffer[1:d]
-    @inbounds @simd for i in 1:d
+    @inbounds @avx for i in 1:d
         buffer[i] = b[i] - a[i]
     end
 
@@ -83,7 +95,7 @@ function segment_signature!(
     d = D
     @assert length(buffer) >= d
 
-    @inbounds @simd for i in 1:d
+    @inbounds @avx for i in 1:d
         buffer[i] = b[i] - a[i]
     end
 
@@ -108,7 +120,7 @@ end
 
 @inline function chen_product!(
     out::StridedVector{T}, x1::StridedVector{T}, x2::StridedVector{T},
-    d::Int, m::Int, offsets::Vector{Int}
+    m::Int, offsets::Vector{Int}
 ) where {T}
     @inbounds for k in 1:m
         out_start = offsets[k] + 1
@@ -122,7 +134,6 @@ end
             b_len   = (k == i) ? 1 : (offsets[k-i+1] - offsets[k-i])
 
             if i == 0 && k == i
-                # both sides are 1 → add ones
                 @inbounds @simd for ai in 1:a_len
                     row_base = out_start + (ai - 1) * b_len
                     @inbounds @simd for bi in 1:b_len
@@ -130,7 +141,6 @@ end
                     end
                 end
             elseif i == 0
-                # left is 1, right is x2
                 @inbounds for ai in 1:a_len
                     row_base = out_start + (ai - 1) * b_len
                     @inbounds @simd for bi in 1:b_len
@@ -138,7 +148,6 @@ end
                     end
                 end
             elseif k == i
-                # right is 1, left is x1
                 @inbounds for ai in 1:a_len
                     a_val = x1[a_start + ai]
                     row_base = out_start + (ai - 1) * b_len
@@ -147,7 +156,6 @@ end
                     end
                 end
             else
-                # general case: outer product
                 @inbounds for ai in 1:a_len
                     a_val = x1[a_start + ai]
                     row_base = out_start + (ai - 1) * b_len
@@ -167,7 +175,6 @@ function signature_path(path::Vector{SVector{D,T}}, m::Int) where {D,T}
     d = D
     total_terms = div(d^(m + 1) - d, d - 1)
 
-    # precompute offsets (no ^ in loop)
     offsets = Vector{Int}(undef, m + 1)
     offsets[1] = 0
     len = d
@@ -176,7 +183,6 @@ function signature_path(path::Vector{SVector{D,T}}, m::Int) where {D,T}
         len *= d
     end
 
-    # precompute inverse levels
     inv_level = Vector{T}(undef, m)
     @inbounds for k in 1:m
         inv_level[k] = inv(T(k))
@@ -191,10 +197,11 @@ function signature_path(path::Vector{SVector{D,T}}, m::Int) where {D,T}
 
     for i in 2:length(path)-1
         segment_signature!(segment, path[i], path[i+1], m, dispbuf, inv_level)
-        chen_product!(b, a, segment, d, m, offsets)
+        chen_product!(b, a, segment, m, offsets)
         a, b = b, a
     end
-    return a
+
+    return TensorSeries(a, d, m)
 end
 
 include("tensor_algebra.jl")
