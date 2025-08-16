@@ -1,4 +1,4 @@
-using BenchmarkTools, StaticArrays
+using Revise, BenchmarkTools, StaticArrays
 using PathSignatures
 
 # length of the flattened tensor series up to level m (assumes d ≥ 2)

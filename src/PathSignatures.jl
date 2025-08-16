@@ -54,7 +54,7 @@ end
 end
 
 # ---- overload for *AbstractVector* endpoints ----
-function segment_signature!(
+@inline function segment_signature!(
     out::StridedVector{T}, a::AbstractVector{T}, b::AbstractVector{T}, m::Int,
     buffer::StridedVector{T}, inv_level::AbstractVector{T}
 ) where {T}
@@ -62,112 +62,94 @@ function segment_signature!(
     @assert length(b) == d
     @assert length(buffer) >= d
 
-    @inbounds @avx for i in 1:d
-        buffer[i] = b[i] - a[i]
-    end
+    @inbounds begin
+        # Δ = b - a
+        @avx for i in 1:d
+            buffer[i] = b[i] - a[i]
+        end
 
-    @assert length(out) == div(d^(m + 1) - d, d - 1)
-
-    # level 1
-    idx = 1
-    curlen = d
-    @inbounds copyto!(out, idx, buffer, 1, d)
-    prev_start = idx
-    idx += curlen
-
-    # levels 2..m
-    for level in 2:m
-        prev_len  = curlen
-        curlen   *= d
-        cur_start = idx
-        _segment_level_offsets!(out, buffer, inv_level[level], prev_start, prev_len, cur_start)
-        prev_start = cur_start
+        # level 1
+        idx    = 1
+        curlen = d
+        copyto!(out, idx, buffer, 1, d)
+        prev_start = idx
         idx += curlen
+
+        # quick return
+        if m == 1
+            @assert idx - 1 == length(out)
+            return nothing
+        end
+
+        # levels 2..m
+        for level in 2:m
+            prev_len  = curlen
+            curlen   *= d
+            cur_start = idx
+            _segment_level_offsets!(out, buffer, inv_level[level],
+                                    prev_start, prev_len, cur_start)
+            prev_start = cur_start
+            idx += curlen
+        end
     end
-    return nothing
-end
 
-# ---- SVector overload (fast path) ----
-function segment_signature!(
-    out::StridedVector{T}, a::SVector{D,T}, b::SVector{D,T}, m::Int,
-    buffer::StridedVector{T}, inv_level::AbstractVector{T}
-) where {D,T}
-    d = D
-    @assert length(buffer) >= d
-
-    @inbounds @avx for i in 1:d
-        buffer[i] = b[i] - a[i]
-    end
-
-    @assert length(out) == div(d^(m + 1) - d, d - 1)
-
-    idx = 1
-    curlen = d
-    @inbounds copyto!(out, idx, buffer, 1, d)
-    prev_start = idx
-    idx += curlen
-
-    for level in 2:m
-        prev_len  = curlen
-        curlen   *= d
-        cur_start = idx
-        _segment_level_offsets!(out, buffer, inv_level[level], prev_start, prev_len, cur_start)
-        prev_start = cur_start
-        idx += curlen
-    end
+    # cheaper postcondition: avoids pow/div
+    @assert idx - 1 == length(out)
     return nothing
 end
 
 @inline function chen_product!(
     out::StridedVector{T}, x1::StridedVector{T}, x2::StridedVector{T},
-    m::Int, offsets::Vector{Int}
+    m::Int, offsets::Vector{Int};
+    fastmath::Bool = false,
 ) where {T}
     @inbounds for k in 1:m
         out_start = offsets[k] + 1
         out_len   = offsets[k+1] - offsets[k]
-        _zero_range!(out, out_start, out_len)
 
-        for i in 0:k
-            a_start = (i == 0) ? 0 : offsets[i]
-            a_len   = (i == 0) ? 1 : (offsets[i+1] - offsets[i])
-            b_start = (k == i) ? 0 : offsets[k-i]
-            b_len   = (k == i) ? 1 : (offsets[k-i+1] - offsets[k-i])
+        # ---- init with i = 0 term: out_k = 1 ⊗ x2_k = x2_k (full-block copy)
+        b_start = offsets[k]                  # 0-based in offsets
+        copyto!(out, out_start, x2, b_start + 1, out_len)
 
-            if i == 0 && k == i
-                @inbounds @simd for ai in 1:a_len
-                    row_base = out_start + (ai - 1) * b_len
-                    @inbounds @simd for bi in 1:b_len
-                        out[row_base + bi - 1] += one(T)
+        # ---- middle terms: i = 1 .. k-1  (outer products, +=)
+        for i in 1:(k-1)
+            a_start = offsets[i]
+            a_len   = offsets[i+1] - offsets[i]
+            b_start = offsets[k - i]
+            b_len   = offsets[k - i + 1] - offsets[k - i]
+
+            for ai in 1:a_len
+                s    = x1[a_start + ai]
+                row0 = out_start + (ai - 1) * b_len - 1
+                bs0  = b_start  # 0-based; index as (bs0 + bi)
+                if fastmath
+                    @fastmath @avx for bi in 1:b_len
+                        out[row0 + bi] += s * x2[bs0 + bi]
+                    end
+                else
+                    @avx for bi in 1:b_len
+                        out[row0 + bi] += s * x2[bs0 + bi]
                     end
                 end
-            elseif i == 0
-                @inbounds for ai in 1:a_len
-                    row_base = out_start + (ai - 1) * b_len
-                    @inbounds @simd for bi in 1:b_len
-                        out[row_base + bi - 1] += x2[b_start + bi]
-                    end
-                end
-            elseif k == i
-                @inbounds for ai in 1:a_len
-                    a_val = x1[a_start + ai]
-                    row_base = out_start + (ai - 1) * b_len
-                    @inbounds @simd for bi in 1:b_len
-                        out[row_base + bi - 1] += a_val
-                    end
-                end
-            else
-                @inbounds for ai in 1:a_len
-                    a_val = x1[a_start + ai]
-                    row_base = out_start + (ai - 1) * b_len
-                    @inbounds @simd for bi in 1:b_len
-                        out[row_base + bi - 1] += a_val * x2[b_start + bi]
-                    end
-                end
+            end
+        end
+
+        # ---- endpoint term: i = k  (x1_k ⊗ 1) → contiguous add
+        # This is a_len = out_len, b_len = 1 → flatten to one loop.
+        a_start = offsets[k]
+        if fastmath
+            @fastmath @avx for j in 1:out_len
+                out[out_start + j - 1] += x1[a_start + j]
+            end
+        else
+            @avx for j in 1:out_len
+                out[out_start + j - 1] += x1[a_start + j]
             end
         end
     end
     return out
 end
+
 
 # ---------------- public API ----------------
 
