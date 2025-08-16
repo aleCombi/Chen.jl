@@ -24,7 +24,7 @@ end
     @inbounds for i in 1:length(Δ)
         s = scale * Δ[i]
         base = cur_start + (i - 1) * prev_len
-        # This loop is usually long (prev_len grows like d^(level-1)) -> @avx helps
+        # long inner loop → AVX helps
         @avx for j in 1:prev_len
             out[base + j - 1] = s * out[prev_start + j - 1]
         end
@@ -49,7 +49,7 @@ function segment_signature!(
     @assert length(b) == d
     @assert length(buffer) >= d
 
-    # displacement in buffer[1:d] (no view)
+    # displacement in buffer[1:d]
     @inbounds @simd for i in 1:d
         buffer[i] = b[i] - a[i]
     end
@@ -151,7 +151,6 @@ end
                 @inbounds for ai in 1:a_len
                     a_val = x1[a_start + ai]
                     row_base = out_start + (ai - 1) * b_len
-                    # These inner loops are often small; @avx can hurt → use @simd
                     @inbounds @simd for bi in 1:b_len
                         out[row_base + bi - 1] += a_val * x2[b_start + bi]
                     end

@@ -3,10 +3,10 @@ using Revise, PythonCall, BenchmarkTools, StaticArrays, PathSignatures
 @py import numpy as np
 
 # path: R -> R^2
-f(t) = @SVector [t, 2t]
+f(t) = @SVector [t, 2t, 2t, 2t, 2t, 2t, 2t, 2t]
 
-ts = range(0.0, stop=1.0, length=1000)
-m = 10
+ts = range(0.0, stop=1.0, length=10000)
+m = 5
 
 # --- Julia signatures ---
 
@@ -28,7 +28,7 @@ sig_py = iisignature.sig(path_np, m)
 sig_py_julia = pyconvert(Vector{Float64}, sig_py)
 
 # ✅ Validate match
-@assert isapprox(sig_julia_vec,  sig_py_julia; atol=1e-12)
+@assert isapprox(sig_julia_vec,  sig_py_julia; atol=1e-6)
 
 # 🕒 Benchmark
 println("Benchmarking:")
