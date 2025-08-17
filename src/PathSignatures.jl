@@ -1,7 +1,7 @@
 module PathSignatures
 
 using StaticArrays
-using LoopVectorization: @avx
+using LoopVectorization: @avx, @turbo
 
 export TensorSeries, signature_path, signature_words, all_signature_words
 
@@ -43,48 +43,53 @@ end
     return nothing
 end
 
-# ---- overload for *AbstractVector* endpoints ----
-@inline function segment_signature!(
-    out::StridedVector{T}, a::AbstractVector{T}, b::AbstractVector{T}, m::Int,
-    buffer::StridedVector{T}, inv_level::AbstractVector{T}
+# --- core kernel: tensor_exponential!(out, x, m) ---
+# Computes: out = Σ_{k=1}^m (x^{⊗k} / k!)
+@inline function tensor_exponential!(
+    out::StridedVector{T}, x::StridedVector{T}, m::Int
 ) where {T}
-    d = length(a)
-    @assert length(b) == d
-    @assert length(buffer) >= d
 
-    @inbounds begin
-        # Δ = b - a
-        @simd for i in 1:d
-            buffer[i] = b[i] - a[i]
-        end
+# level 1
+    d = length(x)
+    idx    = 1
+    curlen = d
+    copyto!(out, idx, x, 1, d)
+    prev_start = idx
+    idx += curlen
 
-        # level 1
-        idx    = 1
-        curlen = d
-        copyto!(out, idx, buffer, 1, d)
-        prev_start = idx
-        idx += curlen
-
-        # quick return
-        if m == 1
-            @assert idx - 1 == length(out)
-            return nothing
-        end
-
-        # levels 2..m
-        for level in 2:m
-            prev_len  = curlen
-            curlen   *= d
-            cur_start = idx
-            _segment_level_offsets!(out, buffer, inv_level[level],
-                                    prev_start, prev_len, cur_start)
-            prev_start = cur_start
-            idx += curlen
-        end
+    # quick return
+    if m == 1
+        @assert idx - 1 == length(out)
+        return nothing
     end
+
+    # levels 2..m
+    @inbounds for level in 2:m
+        prev_len  = curlen
+        curlen   *= d
+        cur_start = idx
+        _segment_level_offsets!(out, x, 1/level,
+                                prev_start, prev_len, cur_start)
+        prev_start = cur_start
+        idx += curlen
+    end 
 
     # cheaper postcondition: avoids pow/div
     @assert idx - 1 == length(out)
+    return nothing
+end
+
+# ---- overload for *AbstractVector* endpoints ----
+@inline function segment_signature!(
+    out::StridedVector{T}, a::AbstractVector{T}, b::AbstractVector{T}, m::Int,
+    buffer::StridedVector{T},
+) where {T}
+    d = length(a)
+    @inbounds @simd for i in 1:d
+        buffer[i] = b[i] - a[i]
+    end
+    
+    tensor_exponential!(out, buffer, m)
     return nothing
 end
 
@@ -138,20 +143,15 @@ function signature_path(path::Vector{SVector{D,T}}, m::Int) where {D,T}
         len *= d
     end
 
-    inv_level = Vector{T}(undef, m)
-    @inbounds for k in 1:m
-        inv_level[k] = inv(T(k))
-    end
-
     a       = Vector{T}(undef, total_terms)
     b       = Vector{T}(undef, total_terms)
     segment = Vector{T}(undef, total_terms)
     dispbuf = Vector{T}(undef, d)
 
-    segment_signature!(a, path[1], path[2], m, dispbuf, inv_level)
+    segment_signature!(a, path[1], path[2], m, dispbuf)
 
     for i in 2:length(path)-1
-        segment_signature!(segment, path[i], path[i+1], m, dispbuf, inv_level)
+        segment_signature!(segment, path[i], path[i+1], m, dispbuf)
         chen_product!(b, a, segment, m, offsets)
         a, b = b, a
     end
