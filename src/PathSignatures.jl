@@ -117,13 +117,9 @@ end
             b_start = offsets[k - i]
             b_len   = offsets[k - i + 1] - offsets[k - i]
 
-            for ai in 1:a_len
-                s    = x1[a_start + ai]
+            @turbo for i in 1:(k-1), ai in 1:a_len, bi in 1:b_len
                 row0 = out_start + (ai - 1) * b_len - 1
-                bs0  = b_start  # 0-based; index as (bs0 + bi)
-                @inbounds @simd for bi in 1:b_len
-                    out[row0 + bi] += s * x2[bs0 + bi]
-                end
+                out[row0 + bi] = muladd(x1[a_start + ai], x2[b_start + bi], out[row0 + bi])
             end
         end
 
