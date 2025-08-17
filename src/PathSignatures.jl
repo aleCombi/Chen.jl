@@ -35,20 +35,10 @@ end
     prev_start::Int, prev_len::Int, cur_start::Int
 ) where {T}
     d = length(Δ)
-    for i in 1:d
+    @turbo for i in 1:d, j in 1:prev_len
         s = scale * Δ[i]
         base = cur_start + (i - 1) * prev_len - 1
-        # long inner loop → AVX helps
-        @avx for j in 1:prev_len
-            out[base + j] = s * out[prev_start + j - 1]
-        end
-    end
-    return nothing
-end
-
-@inline function _zero_range!(x::StridedVector{T}, start::Int, len::Int) where {T}
-    @inbounds @simd for u in 1:len
-        x[start + u - 1] = zero(T)
+        out[base + j] = s * out[prev_start + j - 1]
     end
     return nothing
 end
@@ -64,7 +54,7 @@ end
 
     @inbounds begin
         # Δ = b - a
-        @avx for i in 1:d
+        @simd for i in 1:d
             buffer[i] = b[i] - a[i]
         end
 
@@ -117,7 +107,7 @@ end
             b_start = offsets[k - i]
             b_len   = offsets[k - i + 1] - offsets[k - i]
 
-            @turbo for i in 1:(k-1), ai in 1:a_len, bi in 1:b_len
+            @avx for ai in 1:a_len, bi in 1:b_len
                 row0 = out_start + (ai - 1) * b_len - 1
                 out[row0 + bi] = muladd(x1[a_start + ai], x2[b_start + bi], out[row0 + bi])
             end
@@ -126,7 +116,7 @@ end
         # ---- endpoint term: i = k  (x1_k ⊗ 1) → contiguous add
         # This is a_len = out_len, b_len = 1 → flatten to one loop.
         a_start = offsets[k]
-        @inbounds @simd for j in 1:out_len
+        @avx for j in 1:out_len
             out[out_start + j - 1] += x1[a_start + j]
         end
     end

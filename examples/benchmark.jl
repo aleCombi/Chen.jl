@@ -59,9 +59,9 @@ end
 
 # -------- sweep --------
 function run_bench()
-    Ns   = [10_000]          # adjust if you like
+    Ns   = [1_000, 5_000, 10_000]          # adjust if you like
     Ds   = [2, 3, 8]         # dimensions
-    Ms   = [4, 5, 6]         # truncation levels
+    Ms   = [4, 5, 6, 8]         # truncation levels
     Kinds = [:linear, :sin]  # path families
 
     for N in Ns, d in Ds, m in Ms, kind in Kinds
