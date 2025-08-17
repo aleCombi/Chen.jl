@@ -1,8 +1,8 @@
 using Revise, PythonCall, BenchmarkTools, StaticArrays, PathSignatures, CondaPkg
-# CondaPkg.add_pip("numpy")
-# CondaPkg.add_pip("iisignature")
-# @py import iisignature
-# @py import numpy as np
+CondaPkg.add_pip("numpy")
+CondaPkg.add_pip("iisignature")
+@py import iisignature
+@py import numpy as np
 
 # path: R -> R^2
 f(t) = @SVector [t, 2t, 2t, 2t, 2t, 2t, 2t, 2t]
