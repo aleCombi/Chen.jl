@@ -77,10 +77,6 @@ end
 @inline _write_unit!(t::PathSignatures.Tensor{T}) where {T} =
     (t.coeffs[t.offsets[1] + 1] = one(T); t)
 
-@inline _write_unit!(t::PathSignatures.SparseTensor{T}) where {T} =
-    (t.coeffs[Word()] = one(T); t)
-
-
 """
     exp!(out, X)
 

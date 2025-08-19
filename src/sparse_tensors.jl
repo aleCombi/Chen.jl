@@ -95,6 +95,9 @@ Base.zero(::Type{SparseTensor{T}}, dim::Int, level::Int) where T =
 
 Base.zero(t::SparseTensor{T}) where T = zero(SparseTensor{T}, t.dim, t.level)
 
+@inline _write_unit!(t::PathSignatures.SparseTensor{T}) where {T} =
+    (t.coeffs[Word()] = one(T); t)
+
 # Coefficient access
 function Base.getindex(t::SparseTensor{T}, w::Word) where T
     get(t.coeffs, w, zero(T))

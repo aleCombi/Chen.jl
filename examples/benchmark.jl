@@ -36,18 +36,19 @@ function bench_case(d::Int, m::Int, N::Int, kind::Symbol)
     path = kind === :linear ? make_path_linear(d, N) : make_path_sin(d, N)
 
     # warmups
-    sig_julia = signature_path(path, m)
+    sig_julia = signature_path(Tensor{typeof(path[1][1])},path, m)
     path_np = to_numpy_matrix(path)
     sig_py   = iisignature.sig(path_np, m)
 
     # validate
     sig_py_vec = pyconvert(Vector{Float64}, sig_py)
-    @assert isapprox(sig_julia.coeffs, sig_py_vec; atol=1e-8, rtol=1e-8)
+    @assert isapprox(sig_julia.coeffs[sig_julia.offsets[2]+1:end], sig_py_vec; atol=1e-8, rtol=1e-8)
 
     # timings (no `$` interpolation needed inside a function)
-    t_jl = @belapsed signature_path(path, m)
-    a_jl = @allocated signature_path(path, m)
-    t_py = @belapsed iisignature.sig(path_np, m)
+    tensor_type = PathSignatures.Tensor{typeof(path[1][1])}
+    t_jl = @belapsed signature_path($tensor_type, $path, $m)
+    a_jl = @allocated signature_path(tensor_type, path, m)
+    t_py = @belapsed iisignature.sig($path_np, $m)
 
     println("—"^60)
     println("d=$d, m=$m, N=$N, kind=$kind")
@@ -59,9 +60,9 @@ end
 
 # -------- sweep --------
 function run_bench()
-    Ns   = [1_000, 5_000, 10_000]          # adjust if you like
-    Ds   = [2, 3, 8]         # dimensions
-    Ms   = [4, 5, 6]         # truncation levels
+    Ns   = [150, 1_000, 2_000]          # adjust if you like
+    Ds   = [2, 6, 7, 8]         # dimensions
+    Ms   = [4, 6]         # truncation levels
     Kinds = [:linear]  # path families
 
     for N in Ns, d in Ds, m in Ms, kind in Kinds
