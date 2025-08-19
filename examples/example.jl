@@ -30,17 +30,17 @@ sig_py = iisignature.sig(path_np, m)
 sig_py_julia = pyconvert(Vector{Float64}, sig_py)
 
 # ✅ Validate match
-@assert isapprox(sig_julia_vec.coeffs,  sig_py_julia; atol=1e-6)
+@assert isapprox(sig_julia_vec.coeffs[sig_julia_vec.offsets[2]+1:end],  sig_py_julia; atol=1e-6)
 
 dense_type = Tensor{typeof(path[1][1])}
 sparse_type = SparseTensor{typeof(path[1][1])}
 
 # 🕒 Benchmark
 println("Benchmarking:")
-println("Julia (signature_path(path, m))")
+println("Julia Dense (signature_path(path, m))")
 @btime signature_path($dense_type, $path, $m);
 println("Python (iisignature.sig)")
 @btime $iisignature.sig($path_np, $m);
-
+println("Julia Sparse (signature_path(path, m))")
 @btime signature_path($sparse_type, $path, $m);
 

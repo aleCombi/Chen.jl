@@ -1,7 +1,7 @@
 module PathSignatures
 
 using StaticArrays
-using LoopVectorization: @avx
+using LoopVectorization: @avx, @turbo
 
 include("dense_tensors.jl")
 export Tensor, signature_path, AbstractTensor   

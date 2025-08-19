@@ -12,9 +12,8 @@ struct Tensor{T} <: AbstractTensor{T}
     end
 
     function Tensor{T}(dim::Int, level::Int) where {T}
-        total_terms = div(dim^(level + 1) - dim, dim - 1)
-        coeffs = Vector{T}(undef, total_terms)
-        offsets = level_starts0(dim, level)
+        offsets = level_starts0(dim, level)     # includes pad + end sentinel
+        coeffs  = Vector{T}(undef, offsets[end])
         new{T}(coeffs, dim, level, offsets)
     end
 end
@@ -83,7 +82,7 @@ Compute the truncated power-series exponential:
 (Level-0 unit is implicit and not stored; backends control truncation via `level`.)
 Works for any `Tensor` backend implementing the small interface.
 """
-function exp!(out::AT, X::AT) where {AT<:AbstractTensor}
+function exp!(out::AbstractTensor{T}, X::AbstractTensor{T}) where {T}
     @assert dim(out)   == dim(X)
     @assert level(out) == level(X)
 
@@ -95,7 +94,6 @@ function exp!(out::AT, X::AT) where {AT<:AbstractTensor}
     term = similar(X)
     copy!(term, X)
 
-    T = eltype(X)
     invfact = one(T)                # 1/1!
     add_scaled!(out, term, invfact) # add X
 
@@ -143,43 +141,6 @@ function exp!(out::AT, x::AbstractVector{T}) where {T,AT<:AbstractTensor{T}}
     return exp!(out, X)
 end
 
-# --- core kernel: tensor_exponential!(out, x, m) ---
-# Computes: out = Σ_{k=1}^m (x^{⊗k} / k!)
-@inline function exp!(
-    out::Tensor{T}, x::StridedVector{T}
-) where {T}
-
-# level 1
-    idx    = 1
-    d = out.dim
-    curlen = d
-    m = out.level
-    copyto!(out.coeffs, idx, x, 1, d)
-    prev_start = idx
-    idx += curlen
-
-    # quick return
-    if m == 1
-        @assert idx - 1 == length(out)
-        return nothing
-    end
-
-    # levels 2..m
-    @inbounds for level in 2:m
-        prev_len  = curlen
-        curlen   *= d
-        cur_start = idx
-        scale = inv(T(level))
-        _segment_level_offsets!(out.coeffs, x, scale,
-                                prev_start, prev_len, cur_start)
-        prev_start = cur_start
-        idx += curlen
-    end 
-
-    # cheaper postcondition: avoids pow/div
-    @assert idx - 1 == length(out)
-    return nothing
-end
 
 
 function mul(a::AbstractTensor, b::AbstractTensor)
@@ -190,41 +151,70 @@ end
 
 ⊗(a::AbstractTensor, b::AbstractTensor) = mul(a, b)
 
+# generic path: arbitrary first coefficients (a0, b0)
 @inline function mul!(
     out_tensor::Tensor{T}, x1_tensor::Tensor{T}, x2_tensor::Tensor{T}
 ) where {T}
     out, x1, x2, m = out_tensor.coeffs, x1_tensor.coeffs, x2_tensor.coeffs, out_tensor.level
     offsets = out_tensor.offsets
+    d = out_tensor.dim
+
+    a0 = x1[offsets[1] + 1]
+    b0 = x2[offsets[1] + 1]
+    out[offsets[1] + 1] = a0 * b0
+
+    out_len = d
     @inbounds for k in 1:m
-        out_start = offsets[k] + 1
-        out_len   = offsets[k+1] - offsets[k]
+        out_start = offsets[k + 1] + 1
 
-        # ---- init with i = 0 term: out_k = 1 ⊗ x2_k = x2_k (full-block copy)
-        b_start = offsets[k]                  # 0-based in offsets
-        copyto!(out, out_start, x2, b_start + 1, out_len)
+        # i = 0: out_k ← a0 * x2_k  (write-only; no zeroing)
+        b_start = offsets[k + 1]
+        if a0 == one(T)
+            copyto!(out, out_start, x2, b_start + 1, out_len)
+        elseif a0 == zero(T)
+            @avx for j in 1:out_len
+                out[out_start + j - 1] = zero(T)
+            end
+        else
+            @avx for j in 1:out_len
+                out[out_start + j - 1] = a0 * x2[b_start + j]
+            end
+        end
 
-        # ---- middle terms: i = 1 .. k-1  (outer products, +=)
+        # middle terms: i = 1..k-1
+        a_len = d
         for i in 1:(k-1)
-            a_start = offsets[i]
-            a_len   = offsets[i+1] - offsets[i]
-            b_start = offsets[k - i]
-            b_len   = offsets[k - i + 1] - offsets[k - i]
+            a_start = offsets[i + 1]
+            b_start = offsets[k - i + 1]
+            b_len   = out_len ÷ a_len
 
             @avx for ai in 1:a_len, bi in 1:b_len
                 row0 = out_start + (ai - 1) * b_len - 1
                 out[row0 + bi] = muladd(x1[a_start + ai], x2[b_start + bi], out[row0 + bi])
             end
+
+            a_len *= d
         end
 
-        # ---- endpoint term: i = k  (x1_k ⊗ 1) → contiguous add
-        # This is a_len = out_len, b_len = 1 → flatten to one loop.
-        a_start = offsets[k]
-        @avx for j in 1:out_len
-            out[out_start + j - 1] += x1[a_start + j]
+        # i = k: out_k += b0 * x1_k
+        if b0 != zero(T)
+            a_start = offsets[k + 1]
+            if b0 == one(T)
+                @avx for j in 1:out_len
+                    out[out_start + j - 1] += x1[a_start + j]
+                end
+            else
+                @avx for j in 1:out_len
+                    out[out_start + j - 1] = muladd(b0, x1[a_start + j], out[out_start + j - 1])
+                end
+            end
         end
+
+        out_len *= d
     end
     return out
 end
+
 
 @inline function _segment_level_offsets!(
     out::StridedVector{T}, Δ::StridedVector{T}, scale::T,
@@ -238,6 +228,44 @@ end
     end
     return nothing
 end
+
+@inline function exp!(
+    out::Tensor{T}, x::StridedVector{T}
+) where {T}
+    @assert length(x) == out.dim "exp!: length(x)=$(length(x)) must equal dim=$(out.dim)"
+
+    d = out.dim
+    m = out.level
+    out.coeffs[out.offsets[1] + 1] = one(T)
+    m == 0 && return nothing
+
+    idx    = out.offsets[2] + 1
+    curlen = d
+    copyto!(out.coeffs, idx, x, 1, d)
+    prev_start = idx
+    idx += curlen
+
+    if m == 1
+        @assert idx - 1 == length(out)
+        return nothing
+    end
+
+    @inbounds for level in 2:m
+        prev_len  = curlen
+        curlen   *= d
+        cur_start = idx
+        scale = inv(T(level))
+        _segment_level_offsets!(out.coeffs, x, scale,
+                                prev_start, prev_len, cur_start)
+        prev_start = cur_start
+        idx += curlen
+    end
+
+    # @assert idx - 1 == length(out)
+    return nothing
+end
+
+
 
 """
     level_starts0(dim::Int, level::Int) -> Vector{Int}
@@ -256,13 +284,21 @@ julia> level_starts0(2, 3)
 4-element Vector{Int}: [0, 2, 6, 14]   # sizes 2,4,8 → cumulative 0,2,6,14
 """
 function level_starts0(d, m)
-    offsets = Vector{Int}(undef, m + 1)
+    offsets = Vector{Int}(undef, m + 2)
     offsets[1] = 0
-    len = d
-    @inbounds for k in 1:m
+    len = 1
+    @inbounds for k in 1:m+1
         offsets[k+1] = offsets[k] + len
         len *= d
     end
-
+    # pad so level-1 (offsets[2]+1) is 64B-aligned for Float64
+    W = 8
+    pad = (W - (offsets[2] % W)) % W
+    if pad != 0
+        @inbounds for k in 2:length(offsets)
+            offsets[k] += pad
+        end
+    end
     return offsets
 end
+

@@ -14,6 +14,9 @@ struct Word
     Word() = new(Int[])  # Empty word ∅
 end
 
+Base.iterate(w::Word) = length(w) == 0 ? nothing : (w[1], 2)
+Base.iterate(w::Word, i::Int) = i > length(w) ? nothing : (w[i], i+1)
+
 # Word operations
 Base.length(w::Word) = length(w.indices)
 Base.:(==)(w1::Word, w2::Word) = w1.indices == w2.indices
@@ -48,9 +51,7 @@ struct SparseTensor{T} <: AbstractTensor{T}
     end
 end
 
-@inline function _zero!(ts::SparseTensor{T}) where {T}
-    zero(ts)
-end
+unit!(t::SparseTensor{T}) where {T} = (empty!(t.coeffs); t.coeffs[Word()] = one(T); t)
 
 dim(ts::SparseTensor)   = ts.dim
 level(ts::SparseTensor) = ts.level
@@ -225,7 +226,7 @@ function mul!(dest::SparseTensor{T},
         for (wb, cb) in b.coeffs
             len = length(wa) + length(wb)
             if len <= dest.level
-                key = (wa..., wb...)             # concatenate words
+                key = wa * wb    
                 dest.coeffs[key] = get(dest.coeffs, key, zero(T)) + ca * cb
             end
         end
@@ -412,6 +413,23 @@ function resolvent(ℓ::SparseTensor{T}; max_terms::Int=10) where T
     end
     
     return result
+end
+
+@inline function _zero!(ts::SparseTensor{T}) where {T}
+    empty!(ts.coeffs)    # mutate in place
+    return ts
+end
+
+@inline function add_scaled!(dest::SparseTensor{T}, src::SparseTensor{T}, α::T) where {T}
+    for (w, c) in src.coeffs
+        newv = get(dest.coeffs, w, zero(T)) + α * c
+        if iszero(newv)
+            delete!(dest.coeffs, w)
+        else
+            dest.coeffs[w] = newv
+        end
+    end
+    return dest
 end
 
 # Export main types and functions
