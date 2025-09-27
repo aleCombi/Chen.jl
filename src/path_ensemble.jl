@@ -69,13 +69,13 @@ bm2d = simulate_brownian_svector(SVector{2,Float64}; x0=x0, n_paths=100)
 function simulate_brownian_svector(
     ::Type{SVector{D,T}};
     n_paths::Int = 1000,
-    T::Real = 1.0,
+    horizon::Real = 1.0,
     n_steps::Int = 252,
     x0::SVector{D,T} = zero(SVector{D,T}),
     rng::AbstractRNG = Random.GLOBAL_RNG
 ) where {D,T<:AbstractFloat}
     
-    dt = T / n_steps
+    dt = horizon / n_steps
     sqrt_dt = sqrt(dt)
     
     # Pre-allocate paths vector

@@ -1,10 +1,13 @@
 [deps]
 BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
 CondaPkg = "992eb4ea-22a4-4c89-a5bb-47a3300528ab"
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 DiffEqFinancial = "5a0ffddc-d203-54b0-88ba-2c03c0fc2e67"
+GLM = "38e38edf-8417-5370-95a0-9cbb8c7f171a"
 LoopVectorization = "bdcacae8-1622-11e9-2a5c-532679323890"
 PathSignatures = "4efb4129-5e83-47d2-926d-947c0e6cb76d"
 PythonCall = "6099a3de-0909-46bc-b1f4-468b9a2dfc0d"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 Revise = "295af30f-e4ad-537b-8983-00126c2a3abe"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 StochasticDiffEq = "789caeaf-c7a9-5a7d-9973-96adeb23e2a0"
