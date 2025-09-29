@@ -39,7 +39,7 @@ function exp!(out::AbstractTensor{T}, X::AbstractTensor{T}) where {T}
 end
 
 # Allocating wrapper (works for any backend)
-function exp(X::AT) where {AT<:AbstractTensor}
+function Base.exp(X::AT) where {AT<:AbstractTensor}
     out = similar(X)
     exp!(out, X)
     return out

@@ -6,6 +6,7 @@ include("sparse_tensors.jl")
 include("sparse_dense_conversions.jl")
 include("path_ensemble.jl")  # consolidated version
 include("signatures.jl")
+include("gbm_simulation.jl")
 
 export Tensor, signature_path, signature_path!, SparseTensor   
 export SVectorEnsemble, ArrayEnsemble
