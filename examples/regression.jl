@@ -39,7 +39,8 @@ function call_option_regression_experiment(;
     K = 1.0,           # strike price  
     horizon = 1.0,     # time to maturity
     n_steps = 50,      # path discretization
-    signature_level = 3,
+    signature_level = 5,
+    payoff_func = (path, strike) -> max(path[end][2] - strike,0),  # default: linear payoff S_T - K
     seed = 42
 )
     Random.seed!(seed)
@@ -108,18 +109,16 @@ function call_option_regression_experiment(;
     train_augmented_ensemble = SVectorEnsemble{2,Float64}(train_time_augmented_paths)
     test_augmented_ensemble = SVectorEnsemble{2,Float64}(test_time_augmented_paths)
     
-    # Compute training payoffs: S_T - K
+    # Compute training payoffs using the specified payoff function
     train_payoffs = Vector{Float64}(undef, n_train)
     @inbounds for i in 1:n_train
-        S_T = train_time_augmented_paths[i][end][2]  # final stock price
-        train_payoffs[i] = S_T - K
+        train_payoffs[i] = payoff_func(train_time_augmented_paths[i], K)
     end
     
-    # Compute test payoffs: S_T - K
+    # Compute test payoffs using the same payoff function
     test_payoffs = Vector{Float64}(undef, n_test)
     @inbounds for i in 1:n_test
-        S_T = test_time_augmented_paths[i][end][2]  # final stock price
-        test_payoffs[i] = S_T - K
+        test_payoffs[i] = payoff_func(test_time_augmented_paths[i], K)
     end
     
     println("Training payoff statistics:")
@@ -262,8 +261,9 @@ end
 
 # Run the experiment
 result = call_option_regression_experiment(
-    n_train = 600,
+    n_train = 10000,
     n_test = 200,
-    signature_level = 3,
-    K = 1.0
+    signature_level = 7,
+    K = 1.0,
+    n_steps = 100
 );
