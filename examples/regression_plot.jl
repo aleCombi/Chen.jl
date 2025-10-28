@@ -53,6 +53,7 @@ Supports multiple regression methods:
 function call_option_regression_experiment(;
     n_train = 600,
     n_test = 200,
+    S0 = 1.0,           #spot price
     K = 1.0,           # strike price  
     horizon = 1.0,     # time to maturity
     n_steps = 50,      # path discretization
@@ -68,30 +69,30 @@ function call_option_regression_experiment(;
     l1_ratio = 0.5     # for elasticnet: 0=ridge, 1=lasso
 )
     # No Random.seed! - let it be random each time
-    
+    logS_0 = SVector(log(S0))
     # Generate training data
-    S_0 = SVector(K)
-    train_ensemble = PathSignatures.simulate_gbm_svector(
+    train_ensemble = PathSignatures.simulate_loggbm_svector(
         SVector{1,Float64}; 
         n_paths = n_train,
         horizon = horizon,
         n_steps = n_steps,
-        x0 = S_0,
+        y0 = logS_0,
         μ = SVector(μ),
         σ = SVector(σ)
     )
-    
+    train_ensemble = exp(train_ensemble)
+
     # Generate test data  
-    test_ensemble = PathSignatures.simulate_gbm_svector(
+    test_ensemble = PathSignatures.simulate_loggbm_svector(
         SVector{1,Float64}; 
         n_paths = n_test,
         horizon = horizon,
         n_steps = n_steps,
-        x0 = S_0,
+        y0 = logS_0,
         μ = SVector(μ),
         σ = SVector(σ)
-    )
-
+    ) 
+    test_ensemble = exp(test_ensemble)
     
     # Convert to time-augmented paths (t, S_t)
     dt = horizon / n_steps

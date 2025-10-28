@@ -1,7 +1,78 @@
 # === Geometric Brownian Motion Simulators ===
 
 """
-    simulate_gbm_svector(::Type{SVector{D,T}}; n_paths=1000, T=1.0, n_steps=252,
+    simulate_loggbm_svector(::Type{SVector{D,T}}; n_paths=1000, horizon=1.0, n_steps=252,
+                            y0=zeros(SVector{D,T}), μ=zeros(SVector{D,T}), σ=ones(SVector{D,T}),
+                            rng=Random.GLOBAL_RNG)
+
+Simulate D-dimensional log-space Brownian motion using SVector representation.
+Returns SVectorEnsemble{D,T}.
+
+The SDE in log-space is: dYₜ = (μ - σ²/2)dt + σdWₜ
+where Yₜ = log(Xₜ) for the corresponding GBM process Xₜ.
+
+# Arguments
+- First argument specifies the path point type (e.g., SVector{2,Float64})
+- `n_paths`: Number of paths to simulate
+- `horizon`: Final time
+- `n_steps`: Number of time steps
+- `y0`: Initial value in log-space as SVector{D,T}
+- `μ`: Drift parameter as SVector{D,T}
+- `σ`: Volatility parameter as SVector{D,T}
+- `rng`: Random number generator
+
+# Example
+```julia
+# 2D log-GBM with different parameters per dimension
+μ = SVector(0.05, 0.08)
+σ = SVector(0.2, 0.3)
+y0 = SVector(log(100.0), log(50.0))
+loggbm2d = simulate_loggbm_svector(SVector{2,Float64}; y0=y0, μ=μ, σ=σ, n_paths=1000)
+```
+"""
+function simulate_loggbm_svector(
+    ::Type{SVector{D,T}};
+    n_paths::Int = 1000,
+    horizon::Real = 1.0,
+    n_steps::Int = 252,
+    y0::SVector{D,T} = zero(SVector{D,T}),
+    μ::SVector{D,T} = zero(SVector{D,T}),
+    σ::SVector{D,T} = ones(SVector{D,T}),
+    rng::AbstractRNG = Random.GLOBAL_RNG
+) where {D,T<:AbstractFloat}
+    
+    dt = horizon / n_steps
+    sqrt_dt = sqrt(dt)
+    
+    # Precompute drift term: (μ - σ²/2)dt
+    drift = @. (μ - σ^2 / 2) * dt
+    vol_sqrt_dt = σ .* sqrt_dt
+    
+    # Pre-allocate paths vector
+    paths = Vector{Vector{SVector{D,T}}}(undef, n_paths)
+    
+    # Generate each path
+    @inbounds for i in 1:n_paths
+        path = Vector{SVector{D,T}}(undef, n_steps + 1)
+        path[1] = y0
+        
+        # Generate increments for this path
+        for j in 1:n_steps
+            # Generate D-dimensional increment
+            dW = SVector{D,T}(randn(rng, T) for _ in 1:D)
+            
+            # Additive update in log-space: Y[j+1] = Y[j] + drift + σ*sqrt(dt)*dW
+            path[j+1] = path[j] .+ drift .+ vol_sqrt_dt .* dW
+        end
+        
+        paths[i] = path
+    end
+    
+    return SVectorEnsemble{D,T}(paths)
+end
+
+"""
+    simulate_gbm_svector(::Type{SVector{D,T}}; n_paths=1000, horizon=1.0, n_steps=252,
                          x0=ones(SVector{D,T}), μ=zeros(SVector{D,T}), σ=ones(SVector{D,T}),
                          rng=Random.GLOBAL_RNG)
 
@@ -10,6 +81,8 @@ Returns SVectorEnsemble{D,T}.
 
 The SDE is: dXₜ = diag(μ)Xₜdt + diag(σ)XₜdWₜ
 Solution: Xₜ = X₀ ∘ exp((μ - σ²/2)t + σ∘Wₜ) where ∘ denotes elementwise operations.
+
+This function simulates in log-space and exponentiates the result.
 
 # Arguments
 - First argument specifies the path point type (e.g., SVector{2,Float64})
@@ -41,32 +114,23 @@ function simulate_gbm_svector(
     rng::AbstractRNG = Random.GLOBAL_RNG
 ) where {D,T<:AbstractFloat}
     
-    dt = horizon / n_steps
-    sqrt_dt = sqrt(dt)
+    # Simulate in log-space
+    y0 = log.(x0)
+    log_paths = simulate_loggbm_svector(
+        SVector{D,T};
+        n_paths=n_paths,
+        horizon=horizon,
+        n_steps=n_steps,
+        y0=y0,
+        μ=μ,
+        σ=σ,
+        rng=rng
+    )
     
-    # Precompute drift term: (μ - σ²/2)dt
-    drift = @. (μ - σ^2 / 2) * dt
-    vol_sqrt_dt = σ .* sqrt_dt
-    
-    # Pre-allocate paths vector
+    # Exponentiate to get GBM paths
     paths = Vector{Vector{SVector{D,T}}}(undef, n_paths)
-    
-    # Generate each path
     @inbounds for i in 1:n_paths
-        path = Vector{SVector{D,T}}(undef, n_steps + 1)
-        path[1] = x0
-        
-        # Generate increments for this path
-        for j in 1:n_steps
-            # Generate D-dimensional increment
-            dW = SVector{D,T}(randn(rng, T) for _ in 1:D)
-            
-            # GBM update: X[j+1] = X[j] * exp(drift + σ*sqrt(dt)*dW)
-            log_increment = drift .+ vol_sqrt_dt .* dW
-            path[j+1] = path[j] .* exp.(log_increment)
-        end
-        
-        paths[i] = path
+        paths[i] = [exp.(y) for y in log_paths.paths[i]]
     end
     
     return SVectorEnsemble{D,T}(paths)

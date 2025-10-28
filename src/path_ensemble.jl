@@ -20,6 +20,11 @@ struct SVectorEnsemble{D,T}
     end
 end
 
+function Base.exp(ensemble::SVectorEnsemble{D,T}) where {D,T}
+    new_paths = [map(path_point -> exp.(path_point), path) for path in ensemble.paths]
+    return SVectorEnsemble{D,T}(new_paths)
+end
+
 """
     ArrayEnsemble{T}
 
