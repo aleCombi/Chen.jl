@@ -58,29 +58,38 @@ end
 
 # -------- one benchmark case (Julia only) --------
 
-function bench_case(d::Int, m::Int, N::Int, path_kind::Symbol, repeats::Int)
+function bench_case(d::Int, m::Int, N::Int, path_kind::Symbol, op::Symbol, repeats::Int)
     path = make_path(d, N, path_kind)
     tensor_type = PathSignatures.Tensor{eltype(path[1])}
 
-    # warmup
-    signature_path(tensor_type, path, m)
+    # Helper closures for the two operations
+    run_sig() = signature_path(tensor_type, path, m)
+    run_logsig() = PathSignatures.log(signature_path(tensor_type, path, m))
 
-    # BenchmarkTools will handle repetitions; we just use @belapsed which
-    # already picks a good minimal time. "repeats" can be used to scale samples.
-    t_jl = @belapsed signature_path($tensor_type, $path, $m) evals=1 samples=repeats
-    a_jl = @allocated signature_path(tensor_type, path, m)
+    # Select function and warmup
+    if op === :signature
+        run_sig()
+        # Note: We must interpolate local functions with $ for BenchmarkTools
+        t_jl = @belapsed $run_sig() evals=1 samples=repeats
+        a_jl = @allocated run_sig()
+    elseif op === :logsignature
+        run_logsig()
+        t_jl = @belapsed $run_logsig() evals=1 samples=repeats
+        a_jl = @allocated run_logsig()
+    else
+        error("Unknown operation: $op")
+    end
 
     t_ms      = t_jl * 1000
     alloc_KiB = a_jl / 1024
 
-    println("—"^60)
-    println("Julia: d=$d, m=$m, N=$N, kind=$path_kind")
-    @printf "Julia: %8.3f ms   allocations: %7.1f KiB\n" t_ms alloc_KiB
+    # (Prints removed as requested)
 
     return (N = N,
             d = d,
             m = m,
             path_kind = path_kind,
+            operation = op,
             t_ms = t_ms,
             alloc_KiB = alloc_KiB)
 end
@@ -103,9 +112,10 @@ function run_bench()
     println("  repeats   = $repeats")
 
     results = NamedTuple[]
+    operations = [:signature, :logsignature]
 
-    for N in Ns, d in Ds, m in Ms
-        push!(results, bench_case(d, m, N, path_kind, repeats))
+    for N in Ns, d in Ds, m in Ms, op in operations
+        push!(results, bench_case(d, m, N, path_kind, op, repeats))
     end
 
     runs_path = joinpath(@__DIR__, runs_dir)
@@ -114,7 +124,7 @@ function run_bench()
     ts = Dates.format(Dates.now(), "yyyymmdd_HHMMSS")
     file = joinpath(runs_path, "run_julia_$ts.csv")
 
-    header = ["N", "d", "m", "path_kind", "t_ms", "alloc_KiB"]
+    header = ["N", "d", "m", "path_kind", "operation", "t_ms", "alloc_KiB"]
     data = Array{Any}(undef, length(results) + 1, length(header))
     data[1, :] = header
 
@@ -123,8 +133,9 @@ function run_bench()
         data[i + 1, 2] = r.d
         data[i + 1, 3] = r.m
         data[i + 1, 4] = String(r.path_kind)
-        data[i + 1, 5] = r.t_ms
-        data[i + 1, 6] = r.alloc_KiB
+        data[i + 1, 5] = String(r.operation)
+        data[i + 1, 6] = r.t_ms
+        data[i + 1, 7] = r.alloc_KiB
     end
 
     writedlm(file, data, ',')

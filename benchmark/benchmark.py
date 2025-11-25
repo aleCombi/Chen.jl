@@ -11,18 +11,11 @@ from datetime import datetime
 import numpy as np
 import iisignature
 
-
 # -------- simple YAML-ish config loader (limited, but enough) --------
 
 def load_simple_yaml(path: Path) -> dict:
     """
     Very small subset YAML parser for our specific config structure.
-    Supports:
-      key: "string"
-      key: bare_string
-      key: [1, 2, 3]
-      key: 123
-    Ignores comments (# ...).
     """
     cfg = {}
     with path.open("r", encoding="utf-8") as f:
@@ -41,13 +34,11 @@ def load_simple_yaml(path: Path) -> dict:
             elif value.startswith("["):
                 cfg[key] = ast.literal_eval(value)
             else:
-                # try int, then fall back to bare string
                 try:
                     cfg[key] = int(value)
                 except ValueError:
                     cfg[key] = value
     return cfg
-
 
 def load_config():
     script_dir = Path(__file__).resolve().parent
@@ -77,7 +68,6 @@ def load_config():
         "repeats": repeats,
     }
 
-
 # -------- path generators --------
 
 def make_path_linear(d: int, N: int) -> np.ndarray:
@@ -88,14 +78,12 @@ def make_path_linear(d: int, N: int) -> np.ndarray:
         path[:, 1:] = 2.0 * ts[:, None]
     return path
 
-
 def make_path_sin(d: int, N: int) -> np.ndarray:
     ts = np.linspace(0.0, 1.0, N)
     omega = 2.0 * math.pi
     ks = np.arange(1, d + 1, dtype=float)
     path = np.sin(omega * ts[:, None] * ks[None, :])
     return path
-
 
 def make_path(d: int, N: int, kind: str) -> np.ndarray:
     if kind == "linear":
@@ -104,7 +92,6 @@ def make_path(d: int, N: int, kind: str) -> np.ndarray:
         return make_path_sin(d, N)
     else:
         raise ValueError(f"Unknown path_kind: {kind}")
-
 
 # -------- benchmarking helpers --------
 
@@ -127,35 +114,47 @@ def time_and_peak_memory(func, repeats: int = 5):
 
     return best_time, best_peak
 
-
 # -------- one benchmark case --------
 
-def bench_case(d: int, m: int, N: int, path_kind: str, repeats: int):
+def bench_case(d: int, m: int, N: int, path_kind: str, operation: str, repeats: int):
     path = make_path(d, N, path_kind)
+    
+    # iisignature setup
+    if operation == "signature":
+        # iisignature.sig accepts 'm' directly
+        arg = m
+        func = iisignature.sig
+    elif operation == "logsignature":
+        if d < 2:
+            # iisignature log signature basis generation requires d >= 2
+            return None
+        # iisignature.logsig REQUIRES a prepared basis object
+        arg = iisignature.prepare(d, m)
+        func = iisignature.logsig
+    else:
+        raise ValueError(f"Unknown operation: {operation}")
 
     # warmup
-    _ = iisignature.sig(path, m)
+    _ = func(path, arg)
 
-    def run_sig():
-        iisignature.sig(path, m)
+    def run_op():
+        func(path, arg)
 
-    t_sec, peak_bytes = time_and_peak_memory(run_sig, repeats=repeats)
+    t_sec, peak_bytes = time_and_peak_memory(run_op, repeats=repeats)
     t_ms = t_sec * 1000.0
     alloc_kib = peak_bytes / 1024.0
 
-    print("—" * 60)
-    print(f"Python: d={d}, m={m}, N={N}, kind={path_kind}")
-    print(f"Python (iisignature): {t_ms:8.3f} ms   peak allocations: {alloc_kib:7.1f} KiB")
+    # (Prints removed as requested)
 
     return {
         "N": N,
         "d": d,
         "m": m,
         "path_kind": path_kind,
+        "operation": operation,
         "t_ms": t_ms,
         "alloc_KiB": alloc_kib,
     }
-
 
 # -------- sweep + write grid to file --------
 
@@ -181,15 +180,20 @@ def run_bench():
     runs_path.mkdir(parents=True, exist_ok=True)
 
     results = []
+    operations = ["signature", "logsignature"]
+
     for N in Ns:
         for d in Ds:
             for m in Ms:
-                results.append(bench_case(d, m, N, path_kind, repeats=repeats))
+                for op in operations:
+                    res = bench_case(d, m, N, path_kind, op, repeats=repeats)
+                    if res is not None:
+                        results.append(res)
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     csv_path = runs_path / f"run_python_{ts}.csv"
 
-    fieldnames = ["N", "d", "m", "path_kind", "t_ms", "alloc_KiB"]
+    fieldnames = ["N", "d", "m", "path_kind", "operation", "t_ms", "alloc_KiB"]
     with csv_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
@@ -199,7 +203,6 @@ def run_bench():
     print("=" * 60)
     print(f"Benchmark grid written to: {csv_path}")
     return csv_path
-
 
 if __name__ == "__main__":
     run_bench()

@@ -13,8 +13,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = SCRIPT_DIR / "benchmark_config.yaml"
 PYPROJECT = SCRIPT_DIR / "pyproject.toml"
 
-
-# -------- tiny YAML-ish loader (same as before) --------
+# -------- tiny YAML-ish loader --------
 
 def load_simple_yaml(path: Path) -> dict:
     cfg = {}
@@ -40,7 +39,6 @@ def load_simple_yaml(path: Path) -> dict:
                     cfg[key] = value
     return cfg
 
-
 def load_config():
     if not CONFIG_PATH.is_file():
         raise FileNotFoundError(f"Config file not found: {CONFIG_PATH}")
@@ -48,8 +46,7 @@ def load_config():
     runs_dir = raw.get("runs_dir", "runs")
     return raw, SCRIPT_DIR / runs_dir
 
-
-# -------- uv project bootstrap (always in SCRIPT_DIR) --------
+# -------- uv project bootstrap --------
 
 def ensure_uv_project():
     if not PYPROJECT.exists():
@@ -67,19 +64,16 @@ def ensure_uv_project():
         check=True,
     )
 
-
-# -------- run Julia benchmark in the *benchmark project* --------
+# -------- run Julia benchmark --------
 
 def run_julia_benchmark() -> Path:
     print("=== Running Julia benchmark in local project ===")
 
     env = os.environ.copy()
-    # Point JULIA_PROJECT directly at the benchmark project dir (absolute path)
     env["JULIA_PROJECT"] = str(SCRIPT_DIR)
 
     julia_script = str(SCRIPT_DIR / "benchmark.jl")
 
-    # cwd can be anything, but using SCRIPT_DIR is nice & consistent
     result = subprocess.run(
         ["julia", julia_script],
         cwd=SCRIPT_DIR,
@@ -103,14 +97,13 @@ def run_julia_benchmark() -> Path:
     print(f"Julia CSV: {julia_csv}")
     return julia_csv
 
-
-# -------- run Python benchmark via uv in the same folder --------
+# -------- run Python benchmark --------
 
 def run_python_benchmark() -> Path:
     print("=== Running Python/iisignature benchmark via uv ===")
     result = subprocess.run(
         ["uv", "run", "benchmark.py"],
-        cwd=SCRIPT_DIR,          # always run in the benchmark folder
+        cwd=SCRIPT_DIR,
         text=True,
         capture_output=True,
     )
@@ -130,8 +123,7 @@ def run_python_benchmark() -> Path:
     print(f"Python CSV: {py_csv}")
     return py_csv
 
-
-# -------- comparison logic (unchanged) --------
+# -------- comparison logic --------
 
 def read_csv_by_key(path: Path):
     rows_by_key = {}
@@ -142,10 +134,12 @@ def read_csv_by_key(path: Path):
             d = int(row["d"])
             m = int(row["m"])
             path_kind = row.get("path_kind", row.get("kind", "")).strip()
-            key = (N, d, m, path_kind)
+            # New key: operation
+            operation = row.get("operation", "signature").strip()
+            
+            key = (N, d, m, path_kind, operation)
             rows_by_key[key] = row
     return rows_by_key
-
 
 def compare_runs(julia_csv: Path, python_csv: Path, runs_dir: Path) -> Path:
     julia_rows = read_csv_by_key(julia_csv)
@@ -153,6 +147,8 @@ def compare_runs(julia_csv: Path, python_csv: Path, runs_dir: Path) -> Path:
 
     common_keys = sorted(set(julia_rows.keys()) & set(python_rows.keys()))
     if not common_keys:
+        print("Julia keys sample:", list(julia_rows.keys())[:5])
+        print("Python keys sample:", list(python_rows.keys())[:5])
         raise RuntimeError("No overlapping benchmark keys between Julia and Python CSVs.")
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -163,6 +159,7 @@ def compare_runs(julia_csv: Path, python_csv: Path, runs_dir: Path) -> Path:
         "d",
         "m",
         "path_kind",
+        "operation",
         "t_ms_julia",
         "t_ms_python",
         "speed_ratio_python_over_julia",
@@ -176,9 +173,9 @@ def compare_runs(julia_csv: Path, python_csv: Path, runs_dir: Path) -> Path:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
 
-        for (N, d, m, path_kind) in common_keys:
-            jr = julia_rows[(N, d, m, path_kind)]
-            pr = python_rows[(N, d, m, path_kind)]
+        for (N, d, m, path_kind, operation) in common_keys:
+            jr = julia_rows[(N, d, m, path_kind, operation)]
+            pr = python_rows[(N, d, m, path_kind, operation)]
 
             t_jl = float(jr["t_ms"])
             t_py = float(pr["t_ms"])
@@ -193,6 +190,7 @@ def compare_runs(julia_csv: Path, python_csv: Path, runs_dir: Path) -> Path:
                     "d": d,
                     "m": m,
                     "path_kind": path_kind,
+                    "operation": operation,
                     "t_ms_julia": t_jl,
                     "t_ms_python": t_py,
                     "speed_ratio_python_over_julia": speed_ratio,
@@ -205,7 +203,6 @@ def compare_runs(julia_csv: Path, python_csv: Path, runs_dir: Path) -> Path:
     print(f"Comparison CSV written to: {out_path}")
     return out_path
 
-
 def main():
     cfg, runs_dir = load_config()
     print(f"Using runs_dir from config: {runs_dir}")
@@ -214,7 +211,6 @@ def main():
     julia_csv = run_julia_benchmark()
     python_csv = run_python_benchmark()
     compare_runs(julia_csv, python_csv, runs_dir)
-
 
 if __name__ == "__main__":
     main()

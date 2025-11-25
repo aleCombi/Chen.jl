@@ -11,12 +11,10 @@ import csv
 import numpy as np
 import iisignature
 
-
 SCRIPT_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = SCRIPT_DIR / "benchmark_config.yaml"
 
-
-# -------- tiny YAML-ish loader (same as before) --------
+# -------- tiny YAML-ish loader --------
 
 def load_simple_yaml(path: Path) -> dict:
     cfg = {}
@@ -42,7 +40,6 @@ def load_simple_yaml(path: Path) -> dict:
                     cfg[key] = value
     return cfg
 
-
 def load_config():
     if not CONFIG_PATH.is_file():
         raise FileNotFoundError(f"Config file not found: {CONFIG_PATH}")
@@ -54,8 +51,7 @@ def load_config():
     runs_dir = raw.get("runs_dir", "runs")
     return Ns, Ds, Ms, path_kind, SCRIPT_DIR / runs_dir
 
-
-# -------- path generators (must match Julia) --------
+# -------- path generators --------
 
 def make_path_linear(d: int, N: int) -> np.ndarray:
     ts = np.linspace(0.0, 1.0, N)
@@ -65,14 +61,12 @@ def make_path_linear(d: int, N: int) -> np.ndarray:
         path[:, 1:] = 2.0 * ts[:, None]
     return path
 
-
 def make_path_sin(d: int, N: int) -> np.ndarray:
     ts = np.linspace(0.0, 1.0, N)
     omega = 2.0 * math.pi
     ks = np.arange(1, d + 1, dtype=float)
     path = np.sin(omega * ts[:, None] * ks[None, :])
     return path
-
 
 def make_path(d: int, N: int, kind: str) -> np.ndarray:
     if kind == "linear":
@@ -82,9 +76,9 @@ def make_path(d: int, N: int, kind: str) -> np.ndarray:
     else:
         raise ValueError(f"Unknown path_kind: {kind}")
 
-
 # -------- call Julia helper --------
-def julia_signature(N: int, d: int, m: int, path_kind: str) -> np.ndarray:
+
+def julia_signature(N: int, d: int, m: int, path_kind: str, operation: str) -> np.ndarray:
     cmd = [
         "julia",
         "--project=.",
@@ -93,6 +87,7 @@ def julia_signature(N: int, d: int, m: int, path_kind: str) -> np.ndarray:
         str(d),
         str(m),
         path_kind,
+        operation,
     ]
 
     result = subprocess.run(
@@ -112,7 +107,6 @@ def julia_signature(N: int, d: int, m: int, path_kind: str) -> np.ndarray:
     if not lines:
         print("Julia stderr:\n", result.stderr, file=sys.stderr)
         raise RuntimeError("Julia sigcheck produced no numeric output")
-
     line = lines[-1]
     values = np.fromstring(line, sep=" ", dtype=float)
 
@@ -136,11 +130,14 @@ def compare_signatures():
         "d",
         "m",
         "path_kind",
+        "operation",
         "len_sig",
         "max_abs_diff",
         "l2_diff",
         "rel_l2_diff",
     ]
+
+    operations = ["signature", "logsignature"]
 
     with out_csv.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -149,55 +146,64 @@ def compare_signatures():
         for N in Ns:
             for d in Ds:
                 for m in Ms:
-                    print(f"Comparing signatures for N={N}, d={d}, m={m}, kind={path_kind}...")
-
-                    # Python signature
                     path = make_path(d, N, path_kind)
-                    sig_py = iisignature.sig(path, m)
-                    sig_py = np.asarray(sig_py, dtype=float).ravel()
 
-                    # Julia signature (already sliced to match Python)
-                    sig_jl = julia_signature(N, d, m, path_kind)
+                    for op in operations:
+                        if op == "logsignature" and d < 2:
+                            # iisignature doesn't support logsig for d < 2
+                            continue
 
-                    if sig_jl.shape != sig_py.shape:
-                        # DEBUG: dump shapes and first few entries
-                        print("=== DEBUG SHAPE MISMATCH ===")
-                        print(f"N={N}, d={d}, m={m}, kind={path_kind}")
-                        print("Julia sig shape:", sig_jl.shape)
-                        print("Julia sig first 10:", sig_jl[:10])
-                        print("Python sig shape:", sig_py.shape)
-                        print("Python sig first 10:", sig_py[:10])
-                        print("============================")
-                        raise ValueError(
-                            f"Shape mismatch for N={N}, d={d}, m={m}: "
-                            f"Julia {sig_jl.shape}, Python {sig_py.shape}"
+                        print(f"Comparing {op} for N={N}, d={d}, m={m}, kind={path_kind}...")
+
+                        # 1. Python calculation
+                        if op == "signature":
+                            sig_py = iisignature.sig(path, m)
+                        else:
+                            # iisignature.logsig requires prepared basis
+                            basis = iisignature.prepare(d, m)
+                            sig_py = iisignature.logsig(path, basis)
+                        
+                        sig_py = np.asarray(sig_py, dtype=float).ravel()
+
+                        # 2. Julia calculation
+                        sig_jl = julia_signature(N, d, m, path_kind, op)
+
+                        # 3. Validation
+                        if sig_jl.shape != sig_py.shape:
+                            print("=== DEBUG SHAPE MISMATCH ===")
+                            print(f"N={N}, d={d}, m={m}, kind={path_kind}, op={op}")
+                            print("Julia sig shape:", sig_jl.shape)
+                            print("Python sig shape:", sig_py.shape)
+                            print("============================")
+                            raise ValueError(
+                                f"Shape mismatch for N={N}, d={d}, m={m}, op={op}: "
+                                f"Julia {sig_jl.shape}, Python {sig_py.shape}"
+                            )
+
+                        diff = sig_jl - sig_py
+                        max_abs = float(np.max(np.abs(diff)))
+                        l2 = float(np.linalg.norm(diff))
+                        norm_ref = float(np.linalg.norm(sig_jl))
+                        rel_l2 = l2 / norm_ref if norm_ref > 0 else float("nan")
+
+                        print(f"  len={len(sig_jl)}, max_abs={max_abs:.3e}, rel_l2={rel_l2:.3e}")
+
+                        writer.writerow(
+                            {
+                                "N": N,
+                                "d": d,
+                                "m": m,
+                                "path_kind": path_kind,
+                                "operation": op,
+                                "len_sig": len(sig_jl),
+                                "max_abs_diff": max_abs,
+                                "l2_diff": l2,
+                                "rel_l2_diff": rel_l2,
+                            }
                         )
-
-                    diff = sig_jl - sig_py
-                    max_abs = float(np.max(np.abs(diff)))
-                    l2 = float(np.linalg.norm(diff))
-                    norm_ref = float(np.linalg.norm(sig_jl))
-                    rel_l2 = l2 / norm_ref if norm_ref > 0 else float("nan")
-
-
-                    print(f"  len(sig)={len(sig_jl)}, max_abs={max_abs:.3e}, rel_l2={rel_l2:.3e}")
-
-                    writer.writerow(
-                        {
-                            "N": N,
-                            "d": d,
-                            "m": m,
-                            "path_kind": path_kind,
-                            "len_sig": len(sig_jl),
-                            "max_abs_diff": max_abs,
-                            "l2_diff": l2,
-                            "rel_l2_diff": rel_l2,
-                        }
-                    )
 
     print(f"\nSignature comparison CSV written to: {out_csv}")
     return out_csv
-
 
 if __name__ == "__main__":
     compare_signatures()
