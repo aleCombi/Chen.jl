@@ -1,2 +1,4 @@
 [deps]
+Chen = "4efb4129-5e83-47d2-926d-947c0e6cb76d"
+StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"

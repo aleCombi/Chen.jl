@@ -1,5 +1,5 @@
 using Revise, BenchmarkTools, StaticArrays
-using PathSignatures
+using Chen
 
 # length of the flattened tensor series up to level m (assumes d ≥ 2)
 _terms(d, m) = div(d^(m + 1) - d, d - 1)
@@ -48,7 +48,7 @@ function check_segment_correctness_vec(d::Int, m::Int; T=Float64, atol=1e-12)
     Δ = inp.b .- inp.a
     segment_truth_vec = segment_truth(Δ, m)
     # call your function
-    PathSignatures.segment_signature!(inp.out, inp.a, inp.b, m, inp.buffer, inp.inv_level)
+    Chen.segment_signature!(inp.out, inp.a, inp.b, m, inp.buffer, inp.inv_level)
     return maximum(abs.(segment_truth_vec .- inp.out)) ≤ atol
 end
 
@@ -56,7 +56,7 @@ end
 function bench_segment_vec(d::Int, m::Int; T=Float64)
     inp = make_inputs_vec(d, m, T)
     @info "Vector endpoint" d m length(inp.out)
-    @btime PathSignatures.segment_signature!($((inp.out)), $((inp.a)), $((inp.b)),
+    @btime Chen.segment_signature!($((inp.out)), $((inp.a)), $((inp.b)),
                               $m, $((inp.buffer)), $((inp.inv_level)))
     nothing
 end
@@ -65,7 +65,7 @@ end
 function bench_segment_svec(d::Int, m::Int; T=Float64)
     inp = make_inputs_svec(d, m, T)
     @info "SVector endpoint" d m length(inp.out)
-    @btime PathSignatures.segment_signature!($((inp.out)), $((inp.a)), $((inp.b)),
+    @btime Chen.segment_signature!($((inp.out)), $((inp.a)), $((inp.b)),
                               $m, $((inp.buffer)), $((inp.inv_level)))
     nothing
 end

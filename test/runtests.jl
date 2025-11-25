@@ -1,12 +1,7 @@
 using Test
-using PathSignatures
+using Chen
 
-function test_tensor_interface(x::AbstractTensor)
-    # Must not throw:
-    T = eltype(x)
-    d = dim(x)
-    m = level(x)
-    y = similar(x)
-    copy!(y, x)
-    return true
+@testset "Chen Tests" begin
+    include("exp_log.jl")
+    include("correctness.jl")
 end

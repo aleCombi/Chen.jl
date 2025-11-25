@@ -1,4 +1,4 @@
-using Symbolics, StochasticDiffEq, DiffEqFinancial, PathSignatures, StaticArrays, LinearAlgebra
+using StochasticDiffEq, DiffEqFinancial, Chen, StaticArrays, LinearAlgebra
 
 function augment_brownian(times::Vector{Float64}, W::Vector{Float64})
     @assert length(times) == length(W) "Time and Brownian vectors must have same length"

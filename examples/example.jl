@@ -1,4 +1,4 @@
-using Revise, PythonCall, BenchmarkTools, StaticArrays, PathSignatures, CondaPkg
+using Revise, PythonCall, BenchmarkTools, StaticArrays, Chen, CondaPkg
 CondaPkg.add_pip("numpy")
 CondaPkg.add_pip("iisignature")
 @py import iisignature
@@ -39,8 +39,6 @@ sparse_type = SparseTensor{typeof(path[1][1])}
 println("Benchmarking:")
 println("Julia Dense (signature_path(path, m))")
 @btime signature_path($dense_type, $path, $m);
-println("Python (iisignature.sig)")
-@btime $iisignature.sig($path_np, $m);
 println("Julia Sparse (signature_path(path, m))")
 @btime signature_path($sparse_type, $path, $m);
 

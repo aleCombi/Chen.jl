@@ -2,12 +2,12 @@ using StaticArrays
 using LoopVectorization: @avx, @turbo
 
 struct Tensor{T} <: AbstractTensor{T}
-    coeffs::StridedVector{T}
+    coeffs::Vector{T}
     dim::Int
     level::Int
     offsets::Vector{Int}
     
-    function Tensor(coeffs::StridedVector{T}, dim::Int, level::Int) where {T}
+    function Tensor(coeffs::Vector{T}, dim::Int, level::Int) where {T}
         offsets = level_starts0(dim, level)
         new{T}(coeffs, dim, level, offsets)
     end
@@ -20,7 +20,7 @@ struct Tensor{T} <: AbstractTensor{T}
 end
 
 # -------- Dense ↔ Dense (respects per-level padding) --------
-function Base.isapprox(a::PathSignatures.Tensor{Ta}, b::PathSignatures.Tensor{Tb};
+function Base.isapprox(a::Chen.Tensor{Ta}, b::Chen.Tensor{Tb};
                        atol::Real=1e-8, rtol::Real=1e-8) where {Ta,Tb}
     a.dim == b.dim && a.level == b.level || return false
     sA, sB = a.offsets, b.offsets
@@ -80,7 +80,7 @@ coeffs(ts::Tensor) = ts.coeffs
     fill!(ts.coeffs, zero(T)); ts
 end
 
-@inline function _add_scaled!(dest::Tensor{T}, src::Tensor{T}, α::T) where {T}
+@inline function add_scaled!(dest::Tensor{T}, src::Tensor{T}, α::T) where {T}
     @inbounds @simd for i in eachindex(dest.coeffs, src.coeffs)
         dest.coeffs[i] = muladd(α, src.coeffs[i], dest.coeffs[i])
     end
@@ -104,24 +104,35 @@ Compute the truncated tensor exponential of a level-1 element `x`:
     exp(x) = x + x^2/2! + ... + x^m/m!
 (level-0 unit is implicit/not stored). Works for any Tensor backend.
 """
-function exp!(out::AT, x::AbstractVector{T}) where {T,AT<:AbstractTensor{T}}
-    # Build the level-1 tensor X from x
-    X = similar(out)::AT
-    lift1!(X, x)
+function exp!(out::Tensor{T}, x::AbstractVector{T}) where {T}
+    # Optimized SIMD path for Vector input into Dense Tensor
+    d = out.dim
+    m = out.level
+    out.coeffs[out.offsets[1] + 1] = one(T)
+    m == 0 && return nothing
 
-    # out ← exp(X) via the generic tensor power-series kernel
-    return exp!(out, X)
+    idx    = out.offsets[2] + 1
+    curlen = d
+    copyto!(out.coeffs, idx, x, 1, d)
+    prev_start = idx
+    idx += curlen
+
+    if m == 1
+        return nothing
+    end
+
+    @inbounds for level in 2:m
+        prev_len  = curlen
+        curlen   *= d
+        cur_start = idx
+        scale = inv(T(level))
+        _segment_level_offsets!(out.coeffs, x, scale,
+                                prev_start, prev_len, cur_start)
+        prev_start = cur_start
+        idx += curlen
+    end
+    return nothing
 end
-
-
-
-function mul(a::AbstractTensor, b::AbstractTensor)
-    # allocate same "shape" as a, using eltype promotion
-    dest = similar(a, promote_type(eltype(a), eltype(b)))
-    return mul!(dest, a, b)
-end
-
-⊗(a::AbstractTensor, b::AbstractTensor) = mul(a, b)
 
 # generic path: arbitrary first coefficients (a0, b0)
 @inline function mul!(
@@ -189,7 +200,7 @@ end
 
 
 @inline function _segment_level_offsets!(
-    out::StridedVector{T}, Δ::StridedVector{T}, scale::T,
+    out::Vector{T}, Δ::Vector{T}, scale::T,
     prev_start::Int, prev_len::Int, cur_start::Int
 ) where {T}
     d = length(Δ)
@@ -201,44 +212,6 @@ end
     return nothing
 end
 
-@inline function exp!(
-    out::Tensor{T}, x::StridedVector{T}
-) where {T}
-    @assert length(x) == out.dim "exp!: length(x)=$(length(x)) must equal dim=$(out.dim)"
-
-    d = out.dim
-    m = out.level
-    out.coeffs[out.offsets[1] + 1] = one(T)
-    m == 0 && return nothing
-
-    idx    = out.offsets[2] + 1
-    curlen = d
-    copyto!(out.coeffs, idx, x, 1, d)
-    prev_start = idx
-    idx += curlen
-
-    if m == 1
-        @assert idx - 1 == length(out)
-        return nothing
-    end
-
-    @inbounds for level in 2:m
-        prev_len  = curlen
-        curlen   *= d
-        cur_start = idx
-        scale = inv(T(level))
-        _segment_level_offsets!(out.coeffs, x, scale,
-                                prev_start, prev_len, cur_start)
-        prev_start = cur_start
-        idx += curlen
-    end
-
-    # @assert idx - 1 == length(out)
-    return nothing
-end
-
-
-
 """
     level_starts0(dim::Int, level::Int) -> Vector{Int}
 
@@ -249,11 +222,6 @@ Invariant:
 - `s[1] == 0`
 - `s[k+1] - s[k] == dim^k` (length of level-`k` block)
 - `s[level+1] == (dim^(level+1) - dim) ÷ (dim - 1)` (total length)
-
-Example:
-```julia
-julia> level_starts0(2, 3)
-4-element Vector{Int}: [0, 2, 6, 14]   # sizes 2,4,8 → cumulative 0,2,6,14
 """
 function level_starts0(d, m)
     offsets = Vector{Int}(undef, m + 2)
@@ -274,3 +242,60 @@ function level_starts0(d, m)
     return offsets
 end
 
+"""
+    log!(out::Tensor{T}, g::Tensor{T}) where T
+
+Compute the truncated tensor logarithm of a group-like element `g` up to `out.level`,
+using the power-series:
+    log(g) = (g-1) - (g-1)^2/2 + (g-1)^3/3 - ...  (truncated at level m)
+All multiplications are done with `mul!`. The result has zero level-0.
+"""
+function log!(out::Tensor{T}, g::Tensor{T}) where {T}
+    @assert out.dim == g.dim && out.level == g.level "log!: shape mismatch"
+    m = out.level
+    m == 0 && (fill!(out.coeffs, zero(T)); return out)
+
+    offsets = out.offsets
+    i0 = offsets[1] + 1
+
+    # Require group-like normalisation at level-0
+    @assert g.coeffs[i0] == one(T) "log!: expected level-0 == 1 (group-like element)"
+
+    # X := g - 1
+    X = similar(out)
+    copy!(X, g)
+    X.coeffs[i0] -= one(T)        # make level-0 of X zero
+
+    # Prepare accumulators/buffers
+    _zero!(out)                   # out ← 0 (and we'll ensure out.level-0 stays 0)
+    P = similar(out)              # current power (starts as X)
+    Q = similar(out)              # scratch for next power
+    copy!(P, X)
+
+    sgn = one(T)                  # (+1, -1, +1, ...)
+    for k in 1:m
+        # out += ((-1)^(k+1) / k) * P
+        add_scaled!(out, P, sgn / T(k))
+
+        # Next power if needed: P ← P * X
+        if k < m
+            mul!(Q, P, X)
+            Q.coeffs[i0] = zero(T)  # enforce zero level-0 (should already be)
+            P, Q = Q, P             # swap buffers
+        end
+        sgn = -sgn
+    end
+
+    out.coeffs[i0] = zero(T)      # ensure level-0 is 0 for a Lie element
+    return out
+end
+
+"""
+    log(g::Tensor{T}) -> Tensor{T}
+
+Allocating wrapper for `log!`.
+"""
+function log(g::Tensor{T}) where {T}
+    out = similar(g)
+    return log!(out, g)
+end

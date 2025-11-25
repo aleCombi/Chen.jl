@@ -1,12 +1,11 @@
-abstract type AbstractTensor{T} end
+# src/generic_ops.jl
 
 """
     exp!(out, X)
 
 Compute the truncated power-series exponential:
-    out = X + X^2/2! + ... + X^m/m!
-(Level-0 unit is implicit and not stored; backends control truncation via `level`.)
-Works for any `Tensor` backend implementing the small interface.
+    out = 1 + X + X^2/2! + ... + X^m/m!
+Works for any tensor backend implementing _zero!, _write_unit!, add_scaled!, mul!.
 """
 function exp!(out::AbstractTensor{T}, X::AbstractTensor{T}) where {T}
     @assert dim(out)   == dim(X)
@@ -28,19 +27,27 @@ function exp!(out::AbstractTensor{T}, X::AbstractTensor{T}) where {T}
     tmp = similar(X)
 
     @inbounds for k in 2:m
-        # tmp <- term * X   (do not assume alias-safety)
+        # tmp <- term * X
         mul!(tmp, term, X)
         term, tmp = tmp, term
 
-        invfact *= inv(T(k))        # update 1/k!
+        invfact *= inv(T(k))
         add_scaled!(out, term, invfact)
     end
     return out
 end
 
-# Allocating wrapper (works for any backend)
+# Allocating wrapper
 function exp(X::AT) where {AT<:AbstractTensor}
     out = similar(X)
     exp!(out, X)
     return out
 end
+
+# Operator aliases
+function mul(a::AbstractTensor, b::AbstractTensor)
+    dest = similar(a, promote_type(eltype(a), eltype(b)))
+    return mul!(dest, a, b)
+end
+
+const ⊗ = mul

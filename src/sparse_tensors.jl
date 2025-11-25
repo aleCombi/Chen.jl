@@ -2,13 +2,10 @@ using LinearAlgebra
 
 """
     Word
-
 Represents a word (multi-index) in the tensor algebra basis.
-A word is a sequence of indices i₁i₂...iₙ corresponding to eᵢ₁ ⊗ eᵢ₂ ⊗ ... ⊗ eᵢₙ
 """
 struct Word
     indices::Vector{Int}
-    
     Word(indices::Vector{Int}) = new(indices)
     Word(indices::Int...) = new(collect(indices))
     Word() = new(Int[])  # Empty word ∅
@@ -22,22 +19,11 @@ Base.length(w::Word) = length(w.indices)
 Base.:(==)(w1::Word, w2::Word) = w1.indices == w2.indices
 Base.hash(w::Word, h::UInt) = hash(w.indices, h)
 Base.show(io::IO, w::Word) = isempty(w.indices) ? print(io, "∅") : print(io, join(w.indices))
-
-# Concatenation of words
-function Base.:*(w1::Word, w2::Word)
-    Word(vcat(w1.indices, w2.indices))
-end
+Base.:*(w1::Word, w2::Word) = Word(vcat(w1.indices, w2.indices))
 
 """
-    SymbolicTensor{T}
-
-Represents an element of the (extended) tensor algebra TN((ℝᵈ)) as a sparse 
-collection of coefficients indexed by words.
-
-Fields:
-- `coeffs`: Dictionary mapping words to their coefficients
-- `dim`: Dimension of the base space ℝᵈ
-- `level`: Maximum tensor order (nothing for infinite)
+    SparseTensor{T}
+Represents an element of the (extended) tensor algebra.
 """
 struct SparseTensor{T} <: AbstractTensor{T}
     coeffs::Dict{Word, T}
@@ -52,7 +38,6 @@ struct SparseTensor{T} <: AbstractTensor{T}
 end
 
 unit!(t::SparseTensor{T}) where {T} = (empty!(t.coeffs); t.coeffs[Word()] = one(T); t)
-
 dim(ts::SparseTensor)   = ts.dim
 level(ts::SparseTensor) = ts.level
 
@@ -69,38 +54,29 @@ function lift1!(st::SparseTensor{T}, x::AbstractVector{T}) where {T}
 end
 
 # Convenient constructors
-SparseTensor(coeffs::Dict{Word, T}, dim::Int, level::Int) where T = 
-    SparseTensor{T}(coeffs, dim, level)
+SparseTensor(coeffs::Dict{Word, T}, dim::Int, level::Int) where T = SparseTensor{T}(coeffs, dim, level)
+SparseTensor{T}(dim::Int, level::Int) where T = SparseTensor{T}(Dict{Word, T}(), dim, level)
 
-SparseTensor{T}(dim::Int, level::Int) where T = 
-    SparseTensor{T}(Dict{Word, T}(), dim, level)
-
-    @inline function Base.copy!(dest::SparseTensor{T}, src::SparseTensor{T}) where {T}
-    # clear destination coefficients but keep capacity
+@inline function Base.copy!(dest::SparseTensor{T}, src::SparseTensor{T}) where {T}
     empty!(dest.coeffs)
-
-    # copy all entries
     for (w, c) in src.coeffs
         dest.coeffs[w] = c
     end
-
     dest
 end
 
 # -------- Sparse ↔ Sparse --------
-function Base.isapprox(A::PathSignatures.SparseTensor{Ta}, B::PathSignatures.SparseTensor{Tb};
+# FIXED: Removed `Chen.` prefix
+function Base.isapprox(A::SparseTensor{Ta}, B::SparseTensor{Tb};
                        atol::Real=1e-8, rtol::Real=1e-8) where {Ta,Tb}
     A.dim == B.dim && A.level == B.level || return false
     RA = promote_type(Ta, Tb)
     aC, bC = A.coeffs, B.coeffs
-
-    # A's keys against B (missing treated as 0)
     @inbounds for (w, va) in aC
         vb = haskey(bC, w) ? bC[w] : zero(RA)
         vaR = RA(va); vbR = RA(vb)
         if !(abs(vaR - vbR) <= atol + rtol*max(abs(vaR),abs(vbR))); return false; end
     end
-    # Keys in B that are not in A (A treated as 0)
     @inbounds for (w, vb) in bC
         if !haskey(aC, w)
             vbR = RA(vb); vaR = zero(RA)
@@ -111,30 +87,22 @@ function Base.isapprox(A::PathSignatures.SparseTensor{Ta}, B::PathSignatures.Spa
 end
 
 Base.similar(ts::SparseTensor{T}) where {T} = SparseTensor{T}(ts.dim, ts.level)
-
-# Zero tensor
-Base.zero(::Type{SparseTensor{T}}, dim::Int, level::Int) where T = 
-    SparseTensor{T}(dim, level)
-
+Base.zero(::Type{SparseTensor{T}}, dim::Int, level::Int) where T = SparseTensor{T}(dim, level)
 Base.zero(t::SparseTensor{T}) where T = zero(SparseTensor{T}, t.dim, t.level)
 
-@inline _write_unit!(t::PathSignatures.SparseTensor{T}) where {T} =
-    (t.coeffs[Word()] = one(T); t)
+# FIXED: Removed `Chen.` prefix
+@inline _write_unit!(t::SparseTensor{T}) where {T} = (t.coeffs[Word()] = one(T); t)
 
 # Coefficient access
-function Base.getindex(t::SparseTensor{T}, w::Word) where T
-    get(t.coeffs, w, zero(T))
-end
+Base.getindex(t::SparseTensor{T}, w::Word) where T = get(t.coeffs, w, zero(T))
 
 function Base.setindex!(t::SparseTensor{T}, val::T, w::Word) where T
     if iszero(val)
         delete!(t.coeffs, w)
     else
-        # Check level constraint
         if t.level !== nothing && length(w) > t.level
             throw(ArgumentError("Word length $(length(w)) exceeds level $(t.level)"))
         end
-        # Check dimension constraint
         if any(i -> i < 1 || i > t.dim, w.indices)
             throw(ArgumentError("Word indices must be in range 1:$(t.dim)"))
         end
@@ -143,111 +111,62 @@ function Base.setindex!(t::SparseTensor{T}, val::T, w::Word) where T
     return t
 end
 
-# Iteration interface
 Base.iterate(t::SparseTensor) = iterate(t.coeffs)
 Base.iterate(t::SparseTensor, state) = iterate(t.coeffs, state)
 Base.length(t::SparseTensor) = length(t.coeffs)
 
-# Display
 function Base.show(io::IO, t::SparseTensor{T}) where T
     if isempty(t.coeffs)
         print(io, "0")
         return
     end
-    
     first_term = true
     for (word, coeff) in sort(collect(t.coeffs), by=p->length(p.first.indices))
-        if !first_term
-            print(io, " + ")
-        end
+        if !first_term; print(io, " + "); end
         first_term = false
-        
         if coeff == 1 && !isempty(word.indices)
             print(io, word)
         elseif coeff == -1 && !isempty(word.indices)
             print(io, "-", word)
         else
             print(io, coeff)
-            if !isempty(word.indices)
-                print(io, "⋅", word)
-            end
+            if !isempty(word.indices); print(io, "⋅", word); end
         end
     end
 end
 
-# Basic arithmetic operations
+# Arithmetic
 function Base.:+(t1::SparseTensor{T}, t2::SparseTensor{T}) where T
-    @assert t1.dim == t2.dim "Tensor dimensions must match"
-    
+    @assert t1.dim == t2.dim
     result_coeffs = copy(t1.coeffs)
     for (word, coeff) in t2.coeffs
-        if haskey(result_coeffs, word)
-            new_coeff = result_coeffs[word] + coeff
-            if iszero(new_coeff)
-                delete!(result_coeffs, word)
-            else
-                result_coeffs[word] = new_coeff
-            end
-        else
-            result_coeffs[word] = coeff
-        end
+        new_coeff = get(result_coeffs, word, zero(T)) + coeff
+        iszero(new_coeff) ? delete!(result_coeffs, word) : (result_coeffs[word] = new_coeff)
     end
-    
-    level = something(t1.level, t2.level)
-    if t1.level !== nothing && t2.level !== nothing
-        level = max(t1.level, t2.level)
-    end
-    
+    level = max(t1.level, t2.level)
     return SparseTensor{T}(result_coeffs, t1.dim, level)
 end
 
 function Base.:-(t1::SparseTensor{T}, t2::SparseTensor{T}) where T
-    @assert t1.dim == t2.dim "Tensor dimensions must match"
-    
+    @assert t1.dim == t2.dim
     result_coeffs = copy(t1.coeffs)
     for (word, coeff) in t2.coeffs
-        if haskey(result_coeffs, word)
-            new_coeff = result_coeffs[word] - coeff
-            if iszero(new_coeff)
-                delete!(result_coeffs, word)
-            else
-                result_coeffs[word] = new_coeff
-            end
-        else
-            result_coeffs[word] = -coeff
-        end
+        new_coeff = get(result_coeffs, word, zero(T)) - coeff
+        iszero(new_coeff) ? delete!(result_coeffs, word) : (result_coeffs[word] = new_coeff)
     end
-    
-    level = something(t1.level, t2.level)
-    if t1.level !== nothing && t2.level !== nothing
-        level = max(t1.level, t2.level)
-    end
-    
+    level = max(t1.level, t2.level)
     return SparseTensor{T}(result_coeffs, t1.dim, level)
 end
 
 function Base.:*(scalar, t::SparseTensor{T}) where T
-    if iszero(scalar)
-        return zero(t)
-    end
-    
-    result_coeffs = Dict{Word, T}()
-    for (word, coeff) in t.coeffs
-        result_coeffs[word] = scalar * coeff
-    end
-    
+    iszero(scalar) && return zero(t)
+    result_coeffs = Dict{Word, T}(w => scalar * c for (w, c) in t.coeffs)
     return SparseTensor{T}(result_coeffs, t.dim, t.level)
 end
-
 Base.:*(t::SparseTensor, scalar) = scalar * t
 
-# Tensor product operation
-function mul!(dest::SparseTensor{T},
-                   a::SparseTensor{T},
-                   b::SparseTensor{T}) where {T}
-
-    empty!(dest.coeffs)  # clear previous contents
-
+function mul!(dest::SparseTensor{T}, a::SparseTensor{T}, b::SparseTensor{T}) where {T}
+    empty!(dest.coeffs)
     for (wa, ca) in a.coeffs
         for (wb, cb) in b.coeffs
             len = length(wa) + length(wb)
@@ -260,189 +179,65 @@ function mul!(dest::SparseTensor{T},
     return dest
 end
 
-
-"""
-    shuffle_product!(out, t1, t2)
-
-In-place shuffle product. Writes the result of `t1 ⨂ t2` into `out`.
-`out` must be a `SparseTensor` with compatible `dim` and will have its coeffs cleared.
-"""
 function shuffle_product!(out::SparseTensor{T}, t1::SparseTensor{T}, t2::SparseTensor{T}) where {T}
-    @assert t1.dim == t2.dim "Tensor dimensions must match"
-    @assert out.dim == t1.dim "Output tensor dimension mismatch"
-
+    @assert t1.dim == t2.dim
+    @assert out.dim == t1.dim
     empty!(out.coeffs)
-
     for (w1, c1) in t1.coeffs
         for (w2, c2) in t2.coeffs
-            shuffles = compute_shuffles(w1, w2)
             coeff = c1 * c2
-
-            for shuffle_word in shuffles
-                # level check
-                level = something(t1.level, t2.level)
-                if t1.level !== nothing && t2.level !== nothing
-                    level = max(t1.level, t2.level)
-                end
-
-                if length(shuffle_word) <= level
+            for shuffle_word in compute_shuffles(w1, w2)
+                if length(shuffle_word) <= out.level
                     out.coeffs[shuffle_word] = get(out.coeffs, shuffle_word, zero(T)) + coeff
                 end
             end
         end
     end
-
-    out.level = if t1.level !== nothing && t2.level !== nothing
-        max(t1.level, t2.level)
-    else
-        something(t1.level, t2.level)
-    end
-
     return out
 end
 
-"""
-    shuffle_product(t1, t2) -> SparseTensor
-
-Allocating shuffle product. Creates a fresh `SparseTensor`.
-"""
 function shuffle_product(t1::SparseTensor{T}, t2::SparseTensor{T}) where {T}
     return shuffle_product!(similar(t1), t1, t2)
 end
 
-# --- operator alias (⊔ = shuffle product) ---
 const ⊔ = shuffle_product
 
-# Helper function to compute all shuffles of two words
 function compute_shuffles(w1::Word, w2::Word)
-    if isempty(w1.indices)
-        return [w2]
-    elseif isempty(w2.indices)
-        return [w1]
-    else
-        result = Word[]
-        
-        # Take first element from w1
-        rest_w1 = Word(w1.indices[2:end])
-        for shuffle in compute_shuffles(rest_w1, w2)
-            push!(result, Word([w1.indices[1]; shuffle.indices]))
-        end
-        
-        # Take first element from w2
-        rest_w2 = Word(w2.indices[2:end])
-        for shuffle in compute_shuffles(w1, rest_w2)
-            push!(result, Word([w2.indices[1]; shuffle.indices]))
-        end
-        
-        return result
+    if isempty(w1.indices); return [w2]; end
+    if isempty(w2.indices); return [w1]; end
+    result = Word[]
+    # 1. Take from w1
+    for s in compute_shuffles(Word(w1.indices[2:end]), w2)
+        push!(result, Word([w1.indices[1]; s.indices]))
     end
+    # 2. Take from w2
+    for s in compute_shuffles(w1, Word(w2.indices[2:end]))
+        push!(result, Word([w2.indices[1]; s.indices]))
+    end
+    return result
 end
 
-# Projection operation |_u from the paper
-function projection(t::SparseTensor{T}, u::Word) where T
-    result_coeffs = Dict{Word, T}()
-    
-    for (word, coeff) in t.coeffs
-        if length(word) >= length(u) && word.indices[end-length(u)+1:end] == u.indices
-            new_word = Word(word.indices[1:end-length(u)])
-            result_coeffs[new_word] = coeff
-        end
-    end
-    
-    return SparseTensor{T}(result_coeffs, t.dim, t.level)
-end
-
-# Bracket operation ⟨ℓ, p⟩ from the paper
 function bracket(ℓ::SparseTensor{T}, p::SparseTensor{T}) where T
-    @assert ℓ.dim == p.dim "Tensor dimensions must match"
-    
+    @assert ℓ.dim == p.dim
     result = zero(T)
     for (word, coeff_ℓ) in ℓ.coeffs
         if haskey(p.coeffs, word)
             result += coeff_ℓ * p.coeffs[word]
         end
     end
-    
     return result
 end
 
-# Utility functions for creating basis elements
-function basis_element(::Type{T}, dim::Int, word::Word, level::Union{Int, Nothing}=nothing) where T
-    coeffs = Dict{Word, T}(word => one(T))
-    return SparseTensor{T}(coeffs, dim, level)
+function basis_element(::Type{T}, dim::Int, word::Word, level::Int) where T
+    return SparseTensor{T}(Dict(word => one(T)), dim, level)
 end
 
-function empty_word_element(::Type{T}, dim::Int, level::Union{Int, Nothing}=nothing) where T
-    return basis_element(T, dim, Word(), level)
-end
-
-function single_letter_element(::Type{T}, dim::Int, i::Int, level::Union{Int, Nothing}=nothing) where T
+function single_letter_element(::Type{T}, dim::Int, i::Int, level::Int) where T
     return basis_element(T, dim, Word(i), level)
 end
 
-# Truncation operation
-function truncate(t::SparseTensor{T}, level::Int) where T
-    result_coeffs = Dict{Word, T}()
-    
-    for (word, coeff) in t.coeffs
-        if length(word) <= level
-            result_coeffs[word] = coeff
-        end
-    end
-    
-    return SparseTensor{T}(result_coeffs, t.dim, level)
-end
-
-"""
-    shuffle_exponential(ℓ::SymbolicTensor{T}) -> SymbolicTensor{T}
-
-Compute the shuffle exponential e^⊔⊔ℓ = ∑_{n=0}^∞ ℓ^⊔⊔n/n! (Equation 2.7)
-"""
-function shuffle_exponential(ℓ::SparseTensor{T}; max_terms::Int=10) where T
-    result = empty_word_element(T, ℓ.dim, ℓ.level)
-    ℓ_power = empty_word_element(T, ℓ.dim, ℓ.level)  # ℓ^⊔⊔0 = ∅
-    
-    for n in 0:max_terms
-        factorial_n = factorial(n)
-        result = result + (1/factorial_n) * ℓ_power
-        
-        if n < max_terms
-            ℓ_power = shuffle_product(ℓ_power, ℓ)
-        end
-    end
-    
-    return result
-end
-
-"""
-    resolvent(ℓ::SymbolicTensor{T}) -> SymbolicTensor{T}
-
-Compute the resolvent (∅ - ℓ)^{-1} = ∑_{n=0}^∞ ℓ^⊗n (Equation 2.5)
-Assumes ℓ_∅ = 0
-"""
-function resolvent(ℓ::SparseTensor{T}; max_terms::Int=10) where T
-    # Check that ℓ_∅ = 0
-    empty_word = Word()
-    if !iszero(ℓ[empty_word])
-        throw(ArgumentError("For resolvent to be well-defined, coefficient of empty word must be zero"))
-    end
-    
-    result = empty_word_element(T, ℓ.dim, ℓ.level)
-    ℓ_power = empty_word_element(T, ℓ.dim, ℓ.level)  # ℓ^⊗0 = ∅
-    
-    for n in 0:max_terms
-        result = result + ℓ_power
-        
-        if n < max_terms
-            ℓ_power = tensor_product(ℓ_power, ℓ)
-        end
-    end
-    
-    return result
-end
-
 @inline function _zero!(ts::SparseTensor{T}) where {T}
-    empty!(ts.coeffs)    # mutate in place
+    empty!(ts.coeffs)
     return ts
 end
 
@@ -458,8 +253,4 @@ end
     return dest
 end
 
-# Export main types and functions
-export SparseTensor, Word
-export tensor_product, shuffle_product, projection, bracket
-export basis_element, empty_word_element, single_letter_element, truncate
-export resolvent, shuffle_exponential
+export SparseTensor, Word, shuffle_product, bracket
