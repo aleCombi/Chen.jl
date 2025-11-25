@@ -14,10 +14,10 @@ function sig(path::AbstractMatrix, m::Int)
     # Convert Matrix (N x d) to Vector of SVectors for Chen's optimization
     N, d = size(path)
     # Note: Chen expects SVectors for maximum speed
-    sv_path = [Chen.SVector{d, Float64}(path[i,:]) for i in 1:N]
+    sv_path = [SVector{d, Float64}(path[i,:]) for i in 1:N]
     
     # Compute using the Dense backend
-    tensor = Chen.signature_path(Chen.Tensor{Float64}, sv_path, m)
+    tensor = signature_path(Tensor{Float64}, sv_path, m)
     
     # Flatten the tensor (Chen stores it structurally, iisig returns a flat array)
     # We skip the 0-th level (constant 1.0) to match iisignature
@@ -29,7 +29,8 @@ end
 struct BasisCache{T}
     d::Int
     m::Int
-    lynds::Vector{Chen.Word}
+    # FIXED: Use Algebra.Word
+    lynds::Vector{Algebra.Word}
     L::Matrix{T} # Projection matrix to Lyndon basis
 end
 
@@ -40,7 +41,8 @@ Matches iisignature.prepare(d, m).
 Returns a BasisCache object containing the Lyndon basis projection matrix.
 """
 function prepare(d::Int, m::Int)
-    lynds, L, _ = Chen.build_L(d, m)
+    # FIXED: Call Algebra.build_L
+    lynds, L, _ = Algebra.build_L(d, m)
     return BasisCache(d, m, lynds, L)
 end
 
@@ -56,20 +58,21 @@ function logsig(path::AbstractMatrix, basis::BasisCache)
     N, d = size(path)
     @assert d == basis.d "Dimension mismatch between path and basis"
     
-    sv_path = [Chen.SVector{d, Float64}(path[i,:]) for i in 1:N]
+    sv_path = [SVector{d, Float64}(path[i,:]) for i in 1:N]
     
     # 1. Compute full signature
-    sig_tensor = Chen.signature_path(Chen.Tensor{Float64}, sv_path, basis.m)
+    sig_tensor = signature_path(Tensor{Float64}, sv_path, basis.m)
     
     # 2. Compute tensor logarithm (Chen.log is generic)
     log_tensor = Chen.log(sig_tensor)
     
     # 3. Project to Lyndon basis using the precomputed matrix L
-    return Chen.project_to_lyndon(log_tensor, basis.lynds, basis.L)
+    # FIXED: Call Algebra.project_to_lyndon
+    return Algebra.project_to_lyndon(log_tensor, basis.lynds, basis.L)
 end
 
 # --- Helper: Flatten Tensor to Array ---
-function _flatten_tensor(t::Chen.Tensor{T}) where T
+function _flatten_tensor(t::Tensor{T}) where T
     # iisignature returns a single flat array of all levels concatenated
     # Chen stores them with offsets.
     total_len = t.offsets[end] - t.offsets[2] # skip level 0

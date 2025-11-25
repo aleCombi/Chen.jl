@@ -41,11 +41,13 @@ function compute_logsig_lyndon(path, m)
     # 2. Compute Log (Dense)
     log_sig = Chen.log(sig)
     
-    # 3. Build Transform L (using internal Chen function)
-    lynds, L, _ = Chen.build_L(d, m)
+    # 3. Build Transform L (using internal Algebra function)
+    # FIXED: Chen.build_L -> Chen.Algebra.build_L
+    lynds, L, _ = Chen.Algebra.build_L(d, m)
     
-    # 4. Project (using internal Chen function)
-    return Chen.project_to_lyndon(log_sig, lynds, L)
+    # 4. Project (using internal Algebra function)
+    # FIXED: Chen.project_to_lyndon -> Chen.Algebra.project_to_lyndon
+    return Chen.Algebra.project_to_lyndon(log_sig, lynds, L)
 end
 
 @testset "Correctness against iisignature" begin
