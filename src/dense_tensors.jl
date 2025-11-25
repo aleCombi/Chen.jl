@@ -200,9 +200,9 @@ end
 
 
 @inline function _segment_level_offsets!(
-    out::Vector{T}, Δ::Vector{T}, scale::T,
+    out::Vector{T}, Δ::AbstractVector{D}, scale::T,
     prev_start::Int, prev_len::Int, cur_start::Int
-) where {T}
+) where {T,D}
     d = length(Δ)
     @inbounds @avx for i in 1:d, j in 1:prev_len
         s = scale * Δ[i]
