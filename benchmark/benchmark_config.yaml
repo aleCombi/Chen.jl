@@ -20,4 +20,4 @@ repeats: 5
 
 # iisignature log-signature algorithm: "O" (default, expansion) or "S" (area/BCH)
 # "O" is typically faster for dense arrays. "S" might be better for specific cases.
-logsig_method: "O"
+logsig_method: "S"
