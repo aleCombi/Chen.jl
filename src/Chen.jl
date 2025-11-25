@@ -6,6 +6,8 @@ include("sparse_tensors.jl")
 include("sparse_dense_conversions.jl")
 include("signatures.jl")
 include("lyndon_basis.jl")
+include("api.jl")
+
 export Tensor, signature_path, SparseTensor
 
 end # module Chen
