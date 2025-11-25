@@ -1,4 +1,4 @@
-using Revise, PythonCall, BenchmarkTools, StaticArrays, PathSignatures, CondaPkg
+using Revise, PythonCall, BenchmarkTools, StaticArrays, Chen, CondaPkg
 CondaPkg.add_pip("numpy")
 CondaPkg.add_pip("iisignature")
 @py import iisignature

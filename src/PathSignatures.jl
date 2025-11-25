@@ -1,4 +1,4 @@
-module PathSignatures
+module Chen
 
 include("tensors.jl")
 include("dense_tensors.jl")
@@ -8,4 +8,4 @@ include("signatures.jl")
 include("lyndon_basis.jl")
 export Tensor, signature_path, SparseTensor
 
-end # module PathSignatures
+end # module Chen

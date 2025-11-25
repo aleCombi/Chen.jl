@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 from datetime import datetime
 
-# This is the folder where THIS file lives: .../PathSignatures/benchmark
+# This is the folder where THIS file lives: .../Chen/benchmark
 SCRIPT_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = SCRIPT_DIR / "benchmark_config.yaml"
 PYPROJECT = SCRIPT_DIR / "pyproject.toml"

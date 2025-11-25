@@ -1,4 +1,4 @@
-# PathSignatures.jl
+# Chen.jl
 
 A Julia package for computing path signatures, inspired by the Python library iisignature.
 

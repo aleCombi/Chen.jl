@@ -20,7 +20,7 @@ struct Tensor{T} <: AbstractTensor{T}
 end
 
 # -------- Dense ↔ Dense (respects per-level padding) --------
-function Base.isapprox(a::PathSignatures.Tensor{Ta}, b::PathSignatures.Tensor{Tb};
+function Base.isapprox(a::Chen.Tensor{Ta}, b::Chen.Tensor{Tb};
                        atol::Real=1e-8, rtol::Real=1e-8) where {Ta,Tb}
     a.dim == b.dim && a.level == b.level || return false
     sA, sB = a.offsets, b.offsets

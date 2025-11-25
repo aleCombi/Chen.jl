@@ -1,5 +1,5 @@
 using Test
-using PathSignatures
+using Chen
 
 @testset "exp and log are inverses" begin
     
@@ -8,8 +8,8 @@ using PathSignatures
         # Test 1: log(exp(x)) ≈ x for Lie elements
         @testset "log(exp(x)) ≈ x" begin
             # Create a random Lie element (level-0 = 0)
-            x = PathSignatures.Tensor{Float64}(dim, level)
-            PathSignatures._zero!(x)
+            x = Chen.Tensor{Float64}(dim, level)
+            Chen._zero!(x)
             
             # Fill with random values at levels 1..level
             # (keeping level-0 = 0 for a Lie element)
@@ -23,14 +23,14 @@ using PathSignatures
             
             # Compute g = exp(x)
             g = similar(x)
-            PathSignatures.exp!(g, x)
+            Chen.exp!(g, x)
             
             # Verify g is group-like (level-0 should be 1)
             @test g.coeffs[g.offsets[1] + 1] ≈ 1.0
             
             # Compute y = log(g)
             y = similar(x)
-            PathSignatures.log!(y, g)
+            Chen.log!(y, g)
             
             # Check that y ≈ x
             @test isapprox(y, x, atol=1e-10, rtol=1e-10)
@@ -39,8 +39,8 @@ using PathSignatures
         # Test 2: exp(log(g)) ≈ g for group elements
         @testset "exp(log(g)) ≈ g" begin
             # Create a random group element by exponentiating a Lie element
-            x_temp = PathSignatures.Tensor{Float64}(dim, level)
-            PathSignatures._zero!(x_temp)
+            x_temp = Chen.Tensor{Float64}(dim, level)
+            Chen._zero!(x_temp)
             
             # Fill with small random values to ensure convergence
             for k in 1:level
@@ -53,21 +53,21 @@ using PathSignatures
             
             # g = exp(x_temp) - this gives us a valid group element
             g = similar(x_temp)
-            PathSignatures.exp!(g, x_temp)
+            Chen.exp!(g, x_temp)
             
             # Verify g is group-like (level-0 should be 1)
             @test g.coeffs[g.offsets[1] + 1] ≈ 1.0
             
             # Compute x = log(g)
             x = similar(g)
-            PathSignatures.log!(x, g)
+            Chen.log!(x, g)
             
             # Verify x is Lie-like (level-0 should be 0)
             @test x.coeffs[x.offsets[1] + 1] ≈ 0.0 atol=1e-12
             
             # Compute h = exp(x)
             h = similar(g)
-            PathSignatures.exp!(h, x)
+            Chen.exp!(h, x)
             
             # Check that h ≈ g
             @test isapprox(h, g, atol=1e-10, rtol=1e-10)
@@ -79,16 +79,16 @@ using PathSignatures
             x_vec = randn(dim) * 0.1
             
             # Compute g = exp(x_vec)
-            g = PathSignatures.Tensor{Float64}(dim, level)
-            PathSignatures.exp!(g, x_vec)
+            g = Chen.Tensor{Float64}(dim, level)
+            Chen.exp!(g, x_vec)
             
             # Compute x = log(g)
             x = similar(g)
-            PathSignatures.log!(x, g)
+            Chen.log!(x, g)
             
             # Compute h = exp(x)
             h = similar(g)
-            PathSignatures.exp!(h, x)
+            Chen.exp!(h, x)
             
             # Check that h ≈ g
             @test isapprox(h, g, atol=1e-10, rtol=1e-10)
@@ -100,12 +100,12 @@ using PathSignatures
     @testset "level=0 edge case" begin
         dim, level = 3, 0
         
-        x = PathSignatures.Tensor{Float64}(dim, level)
-        PathSignatures._zero!(x)
+        x = Chen.Tensor{Float64}(dim, level)
+        Chen._zero!(x)
         x.coeffs[x.offsets[1] + 1] = 1.0
         
         g = similar(x)
-        PathSignatures.exp!(g, x)
+        Chen.exp!(g, x)
         
         # At level 0, exp should just preserve the unit
         @test g.coeffs[g.offsets[1] + 1] ≈ 1.0

@@ -1,6 +1,6 @@
 using Test
 using StaticArrays
-using PathSignatures
+using Chen
 
 # Load hardcoded reference values
 include("fixtures.jl")
@@ -20,7 +20,7 @@ end
 
 # --- Helpers ---
 
-function flatten_signature(sig::PathSignatures.Tensor{T}) where T
+function flatten_signature(sig::Chen.Tensor{T}) where T
     d, m = sig.dim, sig.level
     out = T[]
     for k in 1:m
@@ -33,19 +33,19 @@ end
 
 function compute_logsig_lyndon(path, m)
     d = length(path[1])
-    tensor_type = PathSignatures.Tensor{eltype(path[1])}
+    tensor_type = Chen.Tensor{eltype(path[1])}
     
     # 1. Compute Signature
     sig = signature_path(tensor_type, path, m)
     
     # 2. Compute Log (Dense)
-    log_sig = PathSignatures.log(sig)
+    log_sig = Chen.log(sig)
     
-    # 3. Build Transform L (using internal PathSignatures function)
-    lynds, L, _ = PathSignatures.build_L(d, m)
+    # 3. Build Transform L (using internal Chen function)
+    lynds, L, _ = Chen.build_L(d, m)
     
-    # 4. Project (using internal PathSignatures function)
-    return PathSignatures.project_to_lyndon(log_sig, lynds, L)
+    # 4. Project (using internal Chen function)
+    return Chen.project_to_lyndon(log_sig, lynds, L)
 end
 
 @testset "Correctness against iisignature" begin
@@ -56,7 +56,7 @@ end
         d, m = 2, 4
         path = make_path_linear(d, N)
         
-        sig_jl_tensor = signature_path(PathSignatures.Tensor{Float64}, path, m)
+        sig_jl_tensor = signature_path(Chen.Tensor{Float64}, path, m)
         sig_jl_flat = flatten_signature(sig_jl_tensor)
         @test sig_jl_flat ≈ Fixtures.SIG_D2_M4_LINEAR atol=1e-12
 
@@ -68,7 +68,7 @@ end
         d, m = 2, 4
         path = make_path_sin(d, N)
 
-        sig_jl_tensor = signature_path(PathSignatures.Tensor{Float64}, path, m)
+        sig_jl_tensor = signature_path(Chen.Tensor{Float64}, path, m)
         sig_jl_flat = flatten_signature(sig_jl_tensor)
         @test sig_jl_flat ≈ Fixtures.SIG_D2_M4_SIN atol=1e-12
 
@@ -80,7 +80,7 @@ end
         d, m = 3, 3
         path = make_path_linear(d, N)
 
-        sig_jl_tensor = signature_path(PathSignatures.Tensor{Float64}, path, m)
+        sig_jl_tensor = signature_path(Chen.Tensor{Float64}, path, m)
         sig_jl_flat = flatten_signature(sig_jl_tensor)
         @test sig_jl_flat ≈ Fixtures.SIG_D3_M3_LINEAR atol=1e-12
 

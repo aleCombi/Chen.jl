@@ -3,7 +3,7 @@
 using Revise
 using BenchmarkTools
 using StaticArrays
-using PathSignatures
+using Chen
 using Printf
 using Dates
 using DelimitedFiles
@@ -60,11 +60,11 @@ end
 
 function bench_case(d::Int, m::Int, N::Int, path_kind::Symbol, op::Symbol, repeats::Int)
     path = make_path(d, N, path_kind)
-    tensor_type = PathSignatures.Tensor{eltype(path[1])}
+    tensor_type = Chen.Tensor{eltype(path[1])}
 
     # Helper closures for the two operations
     run_sig() = signature_path(tensor_type, path, m)
-    run_logsig() = PathSignatures.log(signature_path(tensor_type, path, m))
+    run_logsig() = Chen.log(signature_path(tensor_type, path, m))
 
     # Select function and warmup
     if op === :signature

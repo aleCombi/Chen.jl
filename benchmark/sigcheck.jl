@@ -4,10 +4,10 @@
 #   julia --project=. sigcheck.jl N d m path_kind operation
 
 using StaticArrays
-using PathSignatures
+using Chen
 using LinearAlgebra
 
-# Note: lyndon_basis.jl is now part of PathSignatures, 
+# Note: lyndon_basis.jl is now part of Chen, 
 # so we access build_L and project_to_lyndon via the module.
 
 if length(ARGS) < 5
@@ -46,7 +46,7 @@ end
 # -------- main logic --------
 
 path = make_path(d, N, path_kind)
-tensor_type = PathSignatures.Tensor{eltype(path[1])}
+tensor_type = Chen.Tensor{eltype(path[1])}
 
 # 1. Compute Signature
 sig = signature_path(tensor_type, path, m)
@@ -63,14 +63,14 @@ if operation === :signature
 
 elseif operation === :logsignature
     # 2. Compute Log Signature
-    log_sig_tensor = PathSignatures.log(sig)
+    log_sig_tensor = Chen.log(sig)
     
     # 3. Project to Lyndon basis
-    # Accessing internal functions from PathSignatures
-    lynds, L, _ = PathSignatures.build_L(d, m)
+    # Accessing internal functions from Chen
+    lynds, L, _ = Chen.build_L(d, m)
     
     # project_to_lyndon returns the vector of coefficients
-    output_vec = PathSignatures.project_to_lyndon(log_sig_tensor, lynds, L)
+    output_vec = Chen.project_to_lyndon(log_sig_tensor, lynds, L)
 
 else
     error("Unknown operation: $operation")

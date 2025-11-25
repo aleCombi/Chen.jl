@@ -65,7 +65,7 @@ using LinearAlgebra
 
 # one-hot tensor for a single letter
 function _basis_tensor(::Type{T}, d::Int, N::Int, i::Int) where {T}
-    t = PathSignatures.Tensor{T}(d, N)
+    t = Chen.Tensor{T}(d, N)
     fill!(t.coeffs, zero(T))
     start_lvl1 = t.offsets[1 + 1]      # level-1 block start (0-based)
     t.coeffs[start_lvl1 + i] = one(T)  # +i because indices are 1-based
@@ -73,7 +73,7 @@ function _basis_tensor(::Type{T}, d::Int, N::Int, i::Int) where {T}
 end
 
 # coefficient of tensor word w in dense tensor t
-@inline function _coeff_of_word(t::PathSignatures.Tensor{T}, w::Word) where {T}
+@inline function _coeff_of_word(t::Chen.Tensor{T}, w::Word) where {T}
     d = t.dim
     k = length(w)
     start0 = t.offsets[k+1]
@@ -107,7 +107,7 @@ function build_L(d::Int, N::Int; T=Float64)
     lynds = lyndon_words(d, N)         # you already have this
     m = length(lynds)
     L = zeros(T, m, m)
-    Φcache = Dict{Word, PathSignatures.Tensor{T}}()
+    Φcache = Dict{Word, Chen.Tensor{T}}()
 
     for (j, w) in enumerate(lynds)
         if length(w) == 1
@@ -120,9 +120,9 @@ function build_L(d::Int, N::Int; T=Float64)
             Φu = Φcache[u]
             Φv = Φcache[v]
 
-            tmp1 = PathSignatures.Tensor{T}(d, N)
-            tmp2 = PathSignatures.Tensor{T}(d, N)
-            Φw   = PathSignatures.Tensor{T}(d, N)
+            tmp1 = Chen.Tensor{T}(d, N)
+            tmp2 = Chen.Tensor{T}(d, N)
+            Φw   = Chen.Tensor{T}(d, N)
 
             mul!(tmp1, Φu, Φv)
             mul!(tmp2, Φv, Φu)
@@ -143,7 +143,7 @@ end
 
 Project a dense log-signature (tensor basis) onto Lyndon coordinates.
 """
-function project_to_lyndon(u_dense::PathSignatures.Tensor{T},
+function project_to_lyndon(u_dense::Chen.Tensor{T},
                            lynds::Vector{Word},
                            L::Matrix{T}) where {T}
     m = length(lynds)

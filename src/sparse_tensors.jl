@@ -88,7 +88,7 @@ SparseTensor{T}(dim::Int, level::Int) where T =
 end
 
 # -------- Sparse ↔ Sparse --------
-function Base.isapprox(A::PathSignatures.SparseTensor{Ta}, B::PathSignatures.SparseTensor{Tb};
+function Base.isapprox(A::Chen.SparseTensor{Ta}, B::Chen.SparseTensor{Tb};
                        atol::Real=1e-8, rtol::Real=1e-8) where {Ta,Tb}
     A.dim == B.dim && A.level == B.level || return false
     RA = promote_type(Ta, Tb)
@@ -118,7 +118,7 @@ Base.zero(::Type{SparseTensor{T}}, dim::Int, level::Int) where T =
 
 Base.zero(t::SparseTensor{T}) where T = zero(SparseTensor{T}, t.dim, t.level)
 
-@inline _write_unit!(t::PathSignatures.SparseTensor{T}) where {T} =
+@inline _write_unit!(t::Chen.SparseTensor{T}) where {T} =
     (t.coeffs[Word()] = one(T); t)
 
 # Coefficient access
