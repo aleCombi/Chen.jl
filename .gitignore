@@ -1,4 +1,7 @@
-# Original entries
+############################################################
+# ORIGINAL ENTRIES
+############################################################
+
 **/Manifest.toml
 **/.vscode
 **/uv.lock
@@ -18,3 +21,164 @@ docsbuild/
 *.jl.mem
 
 runs/
+
+
+############################################################
+# GENERAL OS JUNK
+############################################################
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+__MACOSX/
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*.swp
+*.swo
+
+
+############################################################
+# PYTHON: venv, builds, cache, packaging
+############################################################
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pdb
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Packaging
+build/
+dist/
+wheelhouse/
+*.egg-info/
+*.egg
+*.whl
+.eggs/
+
+# pytest
+.cache/
+.pytest_cache/
+
+# Cython / compiled extensions
+*.so
+*.dylib
+*.dll
+
+# Logs
+*.log
+
+
+############################################################
+# UV / PDM / Pip / Poetry / Other modern tools
+############################################################
+
+# uv
+.uv/
+.pyproject.lock
+**/.python-version
+
+# Pip
+pip-wheel-metadata/
+
+# Poetry
+poetry.lock
+.poetry/
+
+# PDM
+pdm.lock
+pdm.toml
+__pypackages__/
+
+
+############################################################
+# JULIA: artifacts, compiled code, scratchspace, history
+############################################################
+
+# Compiled cache
+.julia/compiled/
+.julia/scratchspaces/
+
+# Julia history & crash logs
+.julia_history
+.julia/error.log
+
+# Julia environments created inside projects
+**/.julia/
+
+# Project-specific outputs
+*.ji
+.precompile/
+
+# Julia package artifacts inside repo
+artifacts/
+deps/
+scratch/
+
+# Coverage
+coverage/
+*.cov
+*.lcov
+
+
+############################################################
+# EDITORS / IDEs
+############################################################
+
+# VSCode (you already match .vscode/, but also ignore workspace files)
+*.code-workspace
+
+# JetBrains
+.idea/
+
+
+############################################################
+# MISC / TEMPORARY
+############################################################
+
+# temporary files
+*.tmp
+*.temp
+*.bak
+*.old
+
+# profiling/benchmark output
+*.prof
+*.benchmark
+
+# lock files
+*.lock
+
+# caches
+.cache/
+
+
+############################################################
+# RAW DATA
+############################################################
+
+# dataset dumps that don't belong in repo
+data/
+datasets/
+*.csv
+*.tsv
+*.parquet
+*.h5
+*.npz
