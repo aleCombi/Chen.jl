@@ -1,6 +1,7 @@
 # Original entries
 **/Manifest.toml
 **/.vscode
+**/uv.lock
 
 # Documentation
 docs/build/

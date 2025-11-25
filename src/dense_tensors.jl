@@ -202,7 +202,7 @@ end
 end
 
 @inline function exp!(
-    out::Tensor{T}, x::Vector{T}
+    out::Tensor{T}, x::AbstractVector{T}
 ) where {T}
     @assert length(x) == out.dim "exp!: length(x)=$(length(x)) must equal dim=$(out.dim)"
 
