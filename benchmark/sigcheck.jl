@@ -1,14 +1,8 @@
-# sigcheck.jl
-#
-# Usage:
-#   julia --project=. sigcheck.jl N d m path_kind operation
+# benchmark/sigcheck.jl
 
 using StaticArrays
 using Chen
 using LinearAlgebra
-
-# Note: lyndon_basis.jl is now part of Chen, 
-# so we access build_L and project_to_lyndon via the module.
 
 if length(ARGS) < 5
     error("Usage: julia sigcheck.jl N d m path_kind operation")
@@ -19,8 +13,6 @@ d = parse(Int, ARGS[2])
 m = parse(Int, ARGS[3])
 path_kind = Symbol(ARGS[4]) # "linear" or "sin"
 operation = Symbol(ARGS[5]) # "signature" or "logsignature"
-
-# -------- path generators --------
 
 function make_path_linear(d::Int, N::Int)
     ts = range(0.0, stop=1.0, length=N)
@@ -66,11 +58,11 @@ elseif operation === :logsignature
     log_sig_tensor = Chen.log(sig)
     
     # 3. Project to Lyndon basis
-    # Accessing internal functions from Chen
-    lynds, L, _ = Chen.build_L(d, m)
+    # FIXED: Accessing Algebra submodule
+    lynds, L, _ = Chen.Algebra.build_L(d, m)
     
-    # project_to_lyndon returns the vector of coefficients
-    output_vec = Chen.project_to_lyndon(log_sig_tensor, lynds, L)
+    # FIXED: Accessing Algebra submodule
+    output_vec = Chen.Algebra.project_to_lyndon(log_sig_tensor, lynds, L)
 
 else
     error("Unknown operation: $operation")

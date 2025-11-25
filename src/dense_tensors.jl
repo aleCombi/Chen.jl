@@ -104,24 +104,35 @@ Compute the truncated tensor exponential of a level-1 element `x`:
     exp(x) = x + x^2/2! + ... + x^m/m!
 (level-0 unit is implicit/not stored). Works for any Tensor backend.
 """
-function exp!(out::AT, x::AbstractVector{T}) where {T,AT<:AbstractTensor{T}}
-    # Build the level-1 tensor X from x
-    X = similar(out)::AT
-    lift1!(X, x)
+function exp!(out::Tensor{T}, x::AbstractVector{T}) where {T}
+    # Optimized SIMD path for Vector input into Dense Tensor
+    d = out.dim
+    m = out.level
+    out.coeffs[out.offsets[1] + 1] = one(T)
+    m == 0 && return nothing
 
-    # out ← exp(X) via the generic tensor power-series kernel
-    return exp!(out, X)
+    idx    = out.offsets[2] + 1
+    curlen = d
+    copyto!(out.coeffs, idx, x, 1, d)
+    prev_start = idx
+    idx += curlen
+
+    if m == 1
+        return nothing
+    end
+
+    @inbounds for level in 2:m
+        prev_len  = curlen
+        curlen   *= d
+        cur_start = idx
+        scale = inv(T(level))
+        _segment_level_offsets!(out.coeffs, x, scale,
+                                prev_start, prev_len, cur_start)
+        prev_start = cur_start
+        idx += curlen
+    end
+    return nothing
 end
-
-
-
-function mul(a::AbstractTensor, b::AbstractTensor)
-    # allocate same "shape" as a, using eltype promotion
-    dest = similar(a, promote_type(eltype(a), eltype(b)))
-    return mul!(dest, a, b)
-end
-
-⊗(a::AbstractTensor, b::AbstractTensor) = mul(a, b)
 
 # generic path: arbitrary first coefficients (a0, b0)
 @inline function mul!(
@@ -201,44 +212,6 @@ end
     return nothing
 end
 
-@inline function exp!(
-    out::Tensor{T}, x::AbstractVector{T}
-) where {T}
-    @assert length(x) == out.dim "exp!: length(x)=$(length(x)) must equal dim=$(out.dim)"
-
-    d = out.dim
-    m = out.level
-    out.coeffs[out.offsets[1] + 1] = one(T)
-    m == 0 && return nothing
-
-    idx    = out.offsets[2] + 1
-    curlen = d
-    copyto!(out.coeffs, idx, x, 1, d)
-    prev_start = idx
-    idx += curlen
-
-    if m == 1
-        @assert idx - 1 == length(out)
-        return nothing
-    end
-
-    @inbounds for level in 2:m
-        prev_len  = curlen
-        curlen   *= d
-        cur_start = idx
-        scale = inv(T(level))
-        _segment_level_offsets!(out.coeffs, x, scale,
-                                prev_start, prev_len, cur_start)
-        prev_start = cur_start
-        idx += curlen
-    end
-
-    # @assert idx - 1 == length(out)
-    return nothing
-end
-
-
-
 """
     level_starts0(dim::Int, level::Int) -> Vector{Int}
 
@@ -268,8 +241,6 @@ function level_starts0(d, m)
     end
     return offsets
 end
-
-# In dense_tensors.jl (or a new file that is included after it)
 
 """
     log!(out::Tensor{T}, g::Tensor{T}) where T

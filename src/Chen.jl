@@ -1,13 +1,28 @@
 module Chen
 
-include("tensors.jl")
+using StaticArrays
+using LinearAlgebra
+using LoopVectorization
+
+# 1. Base Type
+abstract type AbstractTensor{T} end
+
+# 2. Generic Algorithms (Rename your old tensors.jl to generic_ops.jl)
+#    This defines generic exp! for AbstractTensor
+include("generic_ops.jl") 
+
+# 3. Dense Engine (Defines Tensor)
+#    MUST come before Algebra so Algebra can see 'Tensor'
 include("dense_tensors.jl")
-include("sparse_tensors.jl")
-include("sparse_dense_conversions.jl")
+
+# 4. Algebra Submodule (Defines SparseTensor, uses Tensor)
+include("Algebra.jl") 
+
+# 5. User API
 include("signatures.jl")
-include("lyndon_basis.jl")
 include("api.jl")
 
-export Tensor, signature_path, SparseTensor
+export sig, logsig, prepare
+export Tensor, signature_path
 
-end # module Chen
+end
