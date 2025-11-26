@@ -1,130 +1,115 @@
 # chen-signatures
 
-Fast rough path signatures for Python, powered by Julia.
-
-**1.6× faster** than iisignature with support for **modern Python** (3.9-3.13).
+Fast rough path signatures for Python, powered by a high-performance Julia backend.
 
 [![PyPI](https://img.shields.io/pypi/v/chen-signatures)](https://pypi.org/project/chen-signatures/)
 [![Python](https://img.shields.io/pypi/pyversions/chen-signatures)](https://pypi.org/project/chen-signatures/)
 
+`chen-signatures` brings the speed and numerical stability of Julia’s **ChenSignatures.jl** to Python via `juliacall`, offering a modern, actively maintained alternative to existing signature libraries.
+
+It has been benchmarked against both **iisignature** and **pysiglib**, showing:
+
+- **Comparable performance to pysiglib**, a modern C++/Python implementation  
+- **Consistently faster performance than iisignature** across typical configurations  
+
+Full benchmark notebooks and articles will be published separately.
+
+---
+
 ## Why chen-signatures?
 
-| Feature | chen-signatures | iisignature |
-|---------|-----------------|-------------|
-| **Speed** | 187 ms | 299 ms |
-| **Python 3.10+** | ✅ Yes | ❌ No (≤3.9 only) |
-| **Python 3.13** | ✅ Yes | ❌ No |
-| **Autodiff** | ✅ Yes (ForwardDiff) | ❌ No |
-| **Maintained** | ✅ Active | ⚠️ Unmaintained |
+| Feature | chen-signatures | iisignature | pysiglib |
+|---------|-----------------|-------------|-----------|
+| **Speed** | 🚀 Optimized Julia backend | ⚠️ Older implementation | 🔄 Similar to chen-signatures |
+| **Python ≥ 3.10** | ✅ Yes | ❌ No (≤3.9 only) | ✅ Yes |
+| **Python 3.13** | ✅ Yes | ❌ No | ✅ Yes |
+| **Log-signature** | ✅ Yes | ⚠️ Limited | ❌ Not supported |
+| **Autodiff** | ✅ Yes (ForwardDiff) | ❌ No | ❌ No |
+| **Maintenance** | ✅ Active | ⚠️ Unmaintained | ✅ Active |
 
-*Benchmark: N=1000 points, d=10 dims, level=5*
+---
 
 ## Installation
+
 ```bash
 pip install chen-signatures
 ```
 
-First import will automatically install Julia (via juliacall). Takes ~2 minutes once.
+On first import, `juliacall` will automatically install a lightweight Julia runtime.
+This happens **once per environment**.
+
+---
 
 ## Quick Start
+
 ```python
 import chen
 import numpy as np
 
-# Your time series data
-path = np.random.randn(1000, 10)  # 1000 timepoints, 10 dimensions
+path = np.random.randn(1000, 10)
 
-# Compute signature
 signature = chen.sig(path, m=5)
-
-# Compute log-signature  
 logsignature = chen.logsig(path, m=5)
 ```
+
+---
 
 ## API
 
 ### `sig(path, m)`
 
-Compute the truncated signature up to level `m`.
+Compute a truncated signature up to level `m`.
 
-**Parameters:**
-- `path` : `(N, d)` numpy array - Path data
-- `m` : int - Truncation level
-
-**Returns:** 
-- `numpy.ndarray` - Flattened signature coefficients
-
-**Example:**
 ```python
-import chen
-import numpy as np
-
-path = np.array([[0., 0.], [1., 0.], [1., 1.]])
 sig = chen.sig(path, m=3)
-# Returns array of length d + d² + d³ = 2 + 4 + 8 = 14
 ```
 
 ### `logsig(path, m)`
 
-Compute the log-signature projected onto the Lyndon basis.
+Compute log-signatures using the Lyndon basis.
 
-**Parameters:**
-- `path` : `(N, d)` numpy array - Path data
-- `m` : int - Truncation level
-
-**Returns:**
-- `numpy.ndarray` - Log-signature in Lyndon basis
-
-**Example:**
 ```python
 logsig = chen.logsig(path, m=5)
 ```
 
+---
+
 ## Supported Types
 
-- `float32` and `float64`
-- Any numpy array-like input
+- `float32`, `float64`
+- Any NumPy array-like input  
+- Contiguous arrays recommended (handled automatically)
 
-## Performance
-
-Production-scale benchmark (N=1000, d=10, m=5):
-```python
-import chen
-import numpy as np
-import time
-
-path = np.random.randn(1000, 10)
-
-t0 = time.time()
-sig = chen.sig(path, 5)
-print(f"Time: {(time.time()-t0)*1000:.1f} ms")
-# Output: Time: 187.4 ms
-```
-
-Compare to iisignature: **299.3 ms** (1.6× slower)
+---
 
 ## Use Cases
 
-- **Financial time series**: Extract signature features from price data
-- **Sensor data**: Process multivariate sensor streams  
-- **Neural CDEs**: Differentiable features for neural networks
-- **Anomaly detection**: Signature-based feature engineering
+- Financial time series  
+- Sensor data and IoT  
+- Neural CDEs / differential ML  
+- Representation learning  
+- Anomaly detection  
+
+---
 
 ## Limitations
 
-- **First import is slow** (~2 min to install Julia environment, one-time)
-- **Not GPU-accelerated** (CPU only, but very fast)
-- **Memory usage**: Uses more RAM than iisignature (but negligible for most applications)
+- First import is slow (Julia installation)
+- CPU-only execution
+- Uses more memory than minimal C++ libraries
+
+---
 
 ## Requirements
 
-- Python ≥3.9
-- NumPy ≥1.20
-- ~500MB disk space (for Julia installation)
+- Python ≥ 3.9  
+- NumPy ≥ 1.20  
+- ~500MB disk space for Julia runtime
+
+---
 
 ## Citation
 
-If you use this in research, please cite:
 ```bibtex
 @software{chen_signatures,
   author = {Combi, Alessandro},
@@ -134,10 +119,8 @@ If you use this in research, please cite:
 }
 ```
 
-## License
-
-MIT License - see [LICENSE](../LICENSE) file.
+---
 
 ## Contributing
 
-Issues and pull requests welcome at [github.com/aleCombi/ChenSignatures.jl](https://github.com/aleCombi/ChenSignatures.jl)
+https://github.com/aleCombi/ChenSignatures.jl

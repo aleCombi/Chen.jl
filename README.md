@@ -1,30 +1,164 @@
-# Chen
+# ChenSignatures.jl
 
-**Chen** is a high-performance Julia library for computing path signatures and log-signatures, foundational tools in Rough Path Theory and modern time-series analysis.
+**ChenSignatures.jl** is a high-performance Julia library for computing **path signatures** and **log-signatures**—core tools in Rough Path Theory, stochastic analysis, and modern deep-learning architectures such as Neural CDEs.
 
-[![Build Status](https://github.com/aleCombi/ChenSignatures.jl/actions/workflows/CI.yml/badge.svg?branch=master)](https://github.com/aleCombi/ChenSignatures.jl/actions/workflows/CI.yml?query=branch%3Amaster)
+It provides state-of-the-art speed, sparse algebra support, and a clean API for both research and production use.
+
+[![Build Status](https://github.com/aleCombi/ChenSignatures.jl/actions/workflows/CI.yml/badge.svg?branch=master)](https://github.com/aleCombi/ChenSignatures.jl/actions/workflows/CI.yml?query=branch%3Amaster)  
+[![PyPI](https://img.shields.io/pypi/v/chen-signatures)](https://pypi.org/project/chen-signatures/)
+
+---
 
 ## 📐 Overview
 
-ChenSignatures provides efficient tools for calculating the signature of a path—a sequence of iterated integrals that captures the geometric and algebraic properties of sequential data. It is designed to be a faster, Julia-native alternative to the Python library `iisignature`.
+Path signatures are sequences of iterated integrals that encode the geometric structure of a path.  
+They form a powerful, coordinate-free representation used in:
+
+- time-series modelling  
+- machine learning (Neural CDEs, RNN augmentation)  
+- stochastic analysis  
+- control theory  
+- anomaly detection  
+- feature engineering  
+
+**ChenSignatures.jl** computes both **signatures** and **log-signatures** efficiently and accurately, with full support for dense and sparse tensor algebras.
+
+---
 
 ## ✅ Key Features
 
-- **Path Signatures**: Efficient computation of truncated signatures for vector-valued paths.
-- **Log-Signatures**: Computation of log-signatures projected onto the Lyndon basis for minimal representation.
-- **Tensor Algebra**: Robust support for both **Dense** and **Sparse** tensors (`SparseTensor`).
-- **Algebraic Operations**: Implementation of shuffle products, tensor exponentials, logarithms, and resolvents.
+### Core Functionality
+- **Signatures:** Compute truncated path signatures up to any depth.  
+- **Log-Signatures:** Lyndon-projected log-signatures for minimal bases.  
+- **Tensor Algebra:** Dense and sparse tensor algebra (`SparseTensor`).  
+- **Algebraic Operations:** Shuffle product, tensor exp/log, resolvent operators.
 
-## 🚀 Highlights
+### Performance
+- Highly optimized kernels using:
+  - [`LoopVectorization.jl`](https://github.com/JuliaSIMD/LoopVectorization.jl)  
+  - [`StaticArrays.jl`](https://github.com/JuliaArrays/StaticArrays.jl)
+- Designed to scale across:
+  - long paths (large `N`)  
+  - high dimensions (`d`)  
+  - large truncation levels (`m`)
 
-- **Performance**: Optimized kernels utilizing `LoopVectorization.jl` and `StaticArrays.jl` for high-speed computation.
-- **Sparse Support**: Efficient handling of high-dimensional algebraic structures via sparse representations.
-- **Validated**: core algorithms are validated against the industry-standard `iisignature` library.
+### Validation
+Benchmarked and numerically cross-validated against:
+
+- **iisignature**  
+- **pysiglib**
+
+Full benchmarking and correctness tooling is included (see below).
+
+---
+
+## 🐍 Python API: `chen-signatures`
+
+ChenSignatures.jl powers the Python package:
+
+📦 **PyPI:** https://pypi.org/project/chen-signatures/  
+📁 **Source:** [`python/`](./python)
+
+```bash
+pip install chen-signatures
+```
+
+Features:
+- Same API as Julia (`sig`, `logsig`)  
+- Works on Python **3.9–3.13**  
+- Automatically installs a lightweight Julia runtime via `juliacall`  
+- Faster than `iisignature` and comparable to `pysiglib`  
+
+---
+
+## 📊 Benchmark Suite
+
+A reproducible, multi-library benchmark suite lives in:
+
+📁 **[`benchmark/`](./benchmark)**  
+📁 **[`python/`](./python)** (Python-side benchmarking tools)
+
+The suite compares:
+
+- ChenSignatures.jl  
+- iisignature  
+- pysiglib  
+
+and measures:
+- runtime  
+- memory  
+- speed ratios  
+- correctness differences  
+
+Run everything with:
+
+```bash
+uv run run_benchmark.py
+```
+
+This creates structured outputs:
+
+```
+runs/
+  2025-.../
+      config.yaml
+      run_julia.csv
+      run_python.csv
+      comparison.csv
+      logs/
+      plots/
+```
+
+---
 
 ## 📦 Dependencies
 
-Chen is built on a minimal set of high-performance packages:
+ChenSignatures.jl uses a minimal, high-performance stack:
 
-- `StaticArrays.jl` - For efficient small-vector operations.
-- `LoopVectorization.jl` - For SIMD-optimized inner loops.
-- `LinearAlgebra` - For tensor basis projections.
+- [`StaticArrays.jl`](https://github.com/JuliaArrays/StaticArrays.jl)  
+- [`LoopVectorization.jl`](https://github.com/JuliaSIMD/LoopVectorization.jl)  
+- `LinearAlgebra`  
+
+---
+
+## 🚀 Example
+
+```julia
+using ChenSignatures
+
+path = randn(1000, 5)
+sig = signature(path, 4)
+logsig = logsignature(path, 4)
+```
+
+---
+
+## 🧪 Testing
+
+The repository includes:
+
+- full Julia test suite  
+- cross-language correctness checking (`benchmark/check_signatures.py`)  
+- automatic fixture generation via Python (`generate_fixtures.py`)  
+
+---
+
+## 📚 Citation
+
+```bibtex
+@software{chen_signatures,
+  author = {Combi, Alessandro},
+  title = {ChenSignatures.jl: High-performance signatures and log-signatures},
+  year = {2025},
+  url = {https://github.com/aleCombi/ChenSignatures.jl}
+}
+```
+
+---
+
+## 🤝 Contributing
+
+Contributions welcome!  
+Open issues or pull requests here:
+
+👉 https://github.com/aleCombi/ChenSignatures.jl
