@@ -134,6 +134,61 @@ function exp!(out::Tensor{T}, x::AbstractVector{T}) where {T}
     return nothing
 end
 
+@inline function mul_grouplike!(
+    out_tensor::Tensor{T}, x1_tensor::Tensor{T}, x2_tensor::Tensor{T}
+) where {T}
+    out = out_tensor.coeffs
+    x1  = x1_tensor.coeffs
+    x2  = x2_tensor.coeffs
+
+    m = out_tensor.level
+    d = out_tensor.dim
+    offsets = out_tensor.offsets
+
+    # level-0 index
+    i0 = offsets[1] + 1
+
+    # @assert x1[i0] == one(T) "mul_grouplike!: expected x1 level-0 == 1"
+    # @assert x2[i0] == one(T) "mul_grouplike!: expected x2 level-0 == 1"
+
+    # level-0: 1 * 1 = 1
+    out[i0] = one(T)
+
+    out_len = d
+
+    @inbounds for k in 1:m
+        out_start = offsets[k + 1] + 1
+
+        # Base: out_k = x1_k + x2_k
+        @avx for j in 0:out_len-1
+            out[out_start + j] = x1[out_start + j] + x2[out_start + j]
+        end
+
+        # Middle terms: i = 1..k-1
+        a_len = d
+        for i in 1:(k-1)
+            a_block_start = offsets[i + 1]
+            b_block_start = offsets[k - i + 1]
+            b_len = out_len ÷ a_len
+
+            @avx for ai in 1:a_len, bi in 1:b_len
+                row0 = out_start + (ai - 1) * b_len - 1
+                out[row0 + bi] = muladd(
+                    x1[a_block_start + ai],
+                    x2[b_block_start + bi],
+                    out[row0 + bi],
+                )
+            end
+
+            a_len *= d
+        end
+
+        out_len *= d
+    end
+
+    return out_tensor
+end
+
 # generic path: arbitrary first coefficients (a0, b0)
 @inline function mul!(
     out_tensor::Tensor{T}, x1_tensor::Tensor{T}, x2_tensor::Tensor{T}

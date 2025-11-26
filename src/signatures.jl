@@ -36,7 +36,7 @@ function signature_path!(
         for i in 2:length(path)-1
             Δ = path[i+1] - path[i]
             exp!(segment_tensor, Δ)
-            mul!(b, a, segment_tensor)
+            mul_grouplike!(b, a, segment_tensor)
             a, b = b, a
         end
     end

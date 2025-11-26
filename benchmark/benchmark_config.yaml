@@ -1,7 +1,7 @@
 path_kind: "linear"
 Ns: [100]
 Ds: [5]
-Ms: [2, 3, 4, 5, 6, 7, 8, 9, 10]
+Ms: [5]
 operations: ["signature"]
 runs_dir: "runs"
 repeats: 20
