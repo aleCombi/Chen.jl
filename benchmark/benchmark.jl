@@ -23,12 +23,14 @@ function load_config()
     path_str = get(cfg, "path_kind", "linear")
     runs_dir = get(cfg, "runs_dir", "runs")
     repeats  = get(cfg, "repeats", 5)
+    operations_raw = get(cfg, "operations", ["signature", "logsignature"])
 
     path_kind = Symbol(path_str)
+    operations = Symbol.(operations_raw)
 
     return (Ns = Ns, Ds = Ds, Ms = Ms,
             path_kind = path_kind, runs_dir = runs_dir,
-            repeats = repeats)
+            repeats = repeats, operations = operations)
 end
 
 # -------- path generators --------
@@ -83,8 +85,6 @@ function bench_case(d::Int, m::Int, N::Int, path_kind::Symbol, op::Symbol, repea
     t_ms      = t_jl * 1000
     alloc_KiB = a_jl / 1024
 
-    # (Prints removed as requested)
-
     return (N = N,
             d = d,
             m = m,
@@ -102,17 +102,18 @@ function run_bench()
     path_kind  = cfg.path_kind
     runs_dir   = cfg.runs_dir
     repeats    = cfg.repeats
+    operations = cfg.operations
 
     println("Running Julia benchmark with config:")
-    println("  path_kind = $path_kind")
-    println("  Ns        = $(Ns)")
-    println("  Ds        = $(Ds)")
-    println("  Ms        = $(Ms)")
-    println("  runs_dir  = \"$runs_dir\"")
-    println("  repeats   = $repeats")
+    println("  path_kind  = $path_kind")
+    println("  Ns         = $(Ns)")
+    println("  Ds         = $(Ds)")
+    println("  Ms         = $(Ms)")
+    println("  operations = $(operations)")
+    println("  runs_dir   = \"$runs_dir\"")
+    println("  repeats    = $repeats")
 
     results = NamedTuple[]
-    operations = [:signature, :logsignature]
 
     for N in Ns, d in Ds, m in Ms, op in operations
         push!(results, bench_case(d, m, N, path_kind, op, repeats))

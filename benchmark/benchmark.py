@@ -10,7 +10,21 @@ from pathlib import Path
 from datetime import datetime
 
 import numpy as np
-import iisignature
+
+# Try importing both libraries
+try:
+    import iisignature
+    HAS_IISIG = True
+except ImportError:
+    HAS_IISIG = False
+    print("Warning: iisignature not available", file=sys.stderr)
+
+try:
+    import pysiglib
+    HAS_PYSIGLIB = True
+except ImportError:
+    HAS_PYSIGLIB = False
+    print("Warning: pysiglib not available", file=sys.stderr)
 
 # -------- simple YAML-ish config loader --------
 
@@ -53,6 +67,7 @@ def load_config():
     runs_dir = raw.get("runs_dir", "runs")
     repeats = int(raw.get("repeats", 5))
     logsig_method = raw.get("logsig_method", "O")
+    operations = raw.get("operations", ["signature", "logsignature"])
 
     path_kind = path_kind.lower()
     if path_kind not in ("linear", "sin"):
@@ -66,6 +81,7 @@ def load_config():
         "runs_dir": runs_dir,
         "repeats": repeats,
         "logsig_method": logsig_method,
+        "operations": operations,
     }
 
 # -------- path generators --------
@@ -114,9 +130,13 @@ def time_and_peak_memory(func, repeats: int = 5):
 
     return best_time, best_peak
 
-# -------- one benchmark case --------
+# -------- benchmark implementations --------
 
-def bench_case(d: int, m: int, N: int, path_kind: str, operation: str, method: str, repeats: int):
+def bench_iisignature(d: int, m: int, N: int, path_kind: str, operation: str, method: str, repeats: int):
+    """Benchmark using iisignature library"""
+    if not HAS_IISIG:
+        return None
+        
     # Force clear iisignature cache to prevent 'prepare' conflicts
     if hasattr(iisignature, "_basis_cache"):
         iisignature._basis_cache.clear()
@@ -130,12 +150,11 @@ def bench_case(d: int, m: int, N: int, path_kind: str, operation: str, method: s
         if d < 2:
             return None
         try:
-            # Prepare explicitly with the requested method
             arg = iisignature.prepare(d, m, method)
             func = lambda p, basis: iisignature.logsig(p, basis, method)
         except Exception as e:
             print(f"Error preparing iisignature for d={d}, m={m}, method={method}: {e}", file=sys.stderr)
-            raise
+            return None
     else:
         raise ValueError(f"Unknown operation: {operation}")
 
@@ -148,8 +167,8 @@ def bench_case(d: int, m: int, N: int, path_kind: str, operation: str, method: s
 
         t_sec, peak_bytes = time_and_peak_memory(run_op, repeats=repeats)
     except Exception as e:
-        print(f"Benchmark failed for {operation} d={d} m={m} method={method}: {e}", file=sys.stderr)
-        raise
+        print(f"iisignature benchmark failed for {operation} d={d} m={m}: {e}", file=sys.stderr)
+        return None
 
     t_ms = t_sec * 1000.0
     alloc_kib = peak_bytes / 1024.0
@@ -160,6 +179,50 @@ def bench_case(d: int, m: int, N: int, path_kind: str, operation: str, method: s
         "m": m,
         "path_kind": path_kind,
         "operation": operation,
+        "library": "iisignature",
+        "t_ms": t_ms,
+        "alloc_KiB": alloc_kib,
+    }
+
+def bench_pysiglib(d: int, m: int, N: int, path_kind: str, operation: str, repeats: int):
+    """Benchmark using pysiglib library (signature only - no logsig support)"""
+    if not HAS_PYSIGLIB:
+        return None
+    
+    # pysiglib only supports signature
+    if operation != "signature":
+        return None
+    
+    path = make_path(d, N, path_kind)
+    
+    try:
+        # pysiglib API: pysiglib.signature(path, degree)
+        func = lambda: pysiglib.signature(path, degree=m)
+    except Exception as e:
+        print(f"Error setting up pysiglib sig for d={d}, m={m}: {e}", file=sys.stderr)
+        return None
+
+    try:
+        # warmup
+        _ = func()
+
+        t_sec, peak_bytes = time_and_peak_memory(func, repeats=repeats)
+    except Exception as e:
+        print(f"pysiglib benchmark failed for {operation} d={d} m={m}: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc(file=sys.stderr)
+        return None
+
+    t_ms = t_sec * 1000.0
+    alloc_kib = peak_bytes / 1024.0
+
+    return {
+        "N": N,
+        "d": d,
+        "m": m,
+        "path_kind": path_kind,
+        "operation": operation,
+        "library": "pysiglib",
         "t_ms": t_ms,
         "alloc_KiB": alloc_kib,
     }
@@ -175,35 +238,46 @@ def run_bench():
     runs_dir = cfg["runs_dir"]
     repeats = cfg["repeats"]
     logsig_method = cfg["logsig_method"]
+    operations = cfg["operations"]
 
-    print("Running Python/iisignature benchmark with config:")
+    print("Running Python benchmark suite with config:")
     print(f"  path_kind     = {path_kind}")
     print(f"  Ns            = {Ns}")
     print(f"  Ds            = {Ds}")
     print(f"  Ms            = {Ms}")
+    print(f"  operations    = {operations}")
     print(f"  runs_dir      = \"{runs_dir}\"")
     print(f"  repeats       = {repeats}")
-    print(f"  logsig_method = \"{logsig_method}\"")
+    print(f"  logsig_method = \"{logsig_method}\" (iisignature only)")
+    print(f"  iisignature   = {'available' if HAS_IISIG else 'NOT AVAILABLE'}")
+    print(f"  pysiglib      = {'available' if HAS_PYSIGLIB else 'NOT AVAILABLE'}")
 
     script_dir = Path(__file__).resolve().parent
     runs_path = script_dir / runs_dir
     runs_path.mkdir(parents=True, exist_ok=True)
 
     results = []
-    operations = ["signature", "logsignature"]
 
     for N in Ns:
         for d in Ds:
             for m in Ms:
                 for op in operations:
-                    res = bench_case(d, m, N, path_kind, op, logsig_method, repeats=repeats)
-                    if res is not None:
-                        results.append(res)
+                    # Benchmark iisignature
+                    if HAS_IISIG:
+                        res = bench_iisignature(d, m, N, path_kind, op, logsig_method, repeats=repeats)
+                        if res is not None:
+                            results.append(res)
+                    
+                    # Benchmark pysiglib (only for signature)
+                    if HAS_PYSIGLIB and op == "signature":
+                        res = bench_pysiglib(d, m, N, path_kind, op, repeats=repeats)
+                        if res is not None:
+                            results.append(res)
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     csv_path = runs_path / f"run_python_{ts}.csv"
 
-    fieldnames = ["N", "d", "m", "path_kind", "operation", "t_ms", "alloc_KiB"]
+    fieldnames = ["N", "d", "m", "path_kind", "operation", "library", "t_ms", "alloc_KiB"]
     with csv_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()

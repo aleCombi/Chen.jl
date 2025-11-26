@@ -1,229 +1,77 @@
 using StaticArrays
 using LoopVectorization: @avx, @turbo
 
-struct Tensor{T} <: AbstractTensor{T}
+# -------------------------------------------------------------------
+# 1. Tensor Type Definition
+# -------------------------------------------------------------------
+
+struct Tensor{T,D,M} <: AbstractTensor{T}
     coeffs::Vector{T}
-    dim::Int
-    level::Int
     offsets::Vector{Int}
-    
-    function Tensor(coeffs::Vector{T}, dim::Int, level::Int) where {T}
-        offsets = level_starts0(dim, level)
-        new{T}(coeffs, dim, level, offsets)
-    end
+end
 
-    function Tensor{T}(dim::Int, level::Int) where {T}
-        offsets = level_starts0(dim, level)     # includes pad + end sentinel
-        coeffs  = Vector{T}(undef, offsets[end])
-        new{T}(coeffs, dim, level, offsets)
+# -------------------------------------------------------------------
+# 2. Basic Interface
+# -------------------------------------------------------------------
+
+dim(::Tensor{T,D,M}) where {T,D,M} = D
+level(::Tensor{T,D,M}) where {T,D,M} = M
+
+Base.parent(ts::Tensor) = ts.coeffs
+coeffs(ts::Tensor) = ts.coeffs
+offsets(ts::Tensor) = ts.offsets
+
+Base.eltype(::Tensor{T,D,M}) where {T,D,M} = T
+Base.length(ts::Tensor) = length(ts.coeffs)
+@inline Base.getindex(ts::Tensor, i::Int) = @inbounds ts.coeffs[i]
+@inline Base.setindex!(ts::Tensor, v, i::Int) = @inbounds (ts.coeffs[i] = v)
+
+Base.show(io::IO, ts::Tensor{T,D,M}) where {T,D,M} =
+    print(io, "Tensor{T=$T, D=$D, M=$M}(length=$(length(ts.coeffs)))")
+
+# -------------------------------------------------------------------
+# 3. Constructors (FIXED: Uses zeros instead of undef)
+# -------------------------------------------------------------------
+
+function Tensor{T,D,M}() where {T,D,M}
+    offsets = level_starts0(D, M)
+    # FIX: Initialize with zeros to ensure padding is clean
+    coeffs  = zeros(T, offsets[end]) 
+    return Tensor{T,D,M}(coeffs, offsets)
+end
+
+function Tensor{T,D,M}(coeffs::Vector{T}) where {T,D,M}
+    offsets = level_starts0(D, M)
+    @assert length(coeffs) == offsets[end] "Coefficient length mismatch"
+    return Tensor{T,D,M}(coeffs, offsets)
+end
+
+function Tensor(coeffs::Vector{T}, d::Int, m::Int) where {T}
+    return _make_tensor(coeffs, Val(d), Val(m))
+end
+
+@generated function _make_tensor(coeffs::Vector{T}, ::Val{D}, ::Val{M}) where {T,D,M}
+    quote
+        return Tensor{T,D,M}(coeffs)
     end
 end
 
-# -------- Dense ↔ Dense (respects per-level padding) --------
-function Base.isapprox(a::Chen.Tensor{Ta}, b::Chen.Tensor{Tb};
-                       atol::Real=1e-8, rtol::Real=1e-8) where {Ta,Tb}
-    a.dim == b.dim && a.level == b.level || return false
-    sA, sB = a.offsets, b.offsets
-    d, m = a.dim, a.level
-    len = 1                     # = d^k
-    @inbounds begin
-        # level-0
-        a0 = a.coeffs[sA[1] + 1]; b0 = b.coeffs[sB[1] + 1]
-        if !(abs(a0 - b0) <= atol + rtol*max(abs(a0),abs(b0))); return false; end
-        # levels 1..m
-        for k in 1:m
-            astart = sA[k + 1] + 1
-            bstart = sB[k + 1] + 1
-            for j in 0:len-1
-                va = a.coeffs[astart + j]; vb = b.coeffs[bstart + j]
-                if !(abs(va - vb) <= atol + rtol*max(abs(va),abs(vb))); return false; end
-            end
-            len *= d
-        end
-    end
-    return true
-end
+Base.similar(ts::Tensor{T,D,M}) where {T,D,M} = Tensor{T,D,M}()
+Base.similar(ts::Tensor{T,D,M}, ::Type{S}) where {T,D,M,S} = Tensor{S,D,M}()
 
-## Tensor interface
+Base.copy(ts::Tensor{T,D,M}) where {T,D,M} = 
+    Tensor{T,D,M}(copy(ts.coeffs), ts.offsets)
 
-Base.length(ts::Tensor{T}) where T = length(ts.coeffs)
-Base.getindex(ts::Tensor{T}, i::Int) where T = ts.coeffs[i]
-Base.show(io::IO, ts::Tensor{T}) where T =
-    print(io, "Tensor(dim=$(ts.dim), level=$(ts.level), length=$(length(ts)))")
-
-    # Element type of a Tensor
-Base.eltype(::Tensor{T}) where {T} = T
-
-# Allocate a new Tensorwith the same "shape" (dim, level)
-Base.similar(ts::Tensor{T}) where {T} = Tensor{T}(ts.dim, ts.level)
-
-# Same, but change element type (handy for promoting to BigFloat, Dual, etc.)
-Base.similar(ts::Tensor{T}, ::Type{S}) where {T,S} = Tensor{S}(ts.dim, ts.level)
-
-# Allocate-and-copy convenience
-Base.copy(ts::Tensor{T}) where {T} = Tensor(copy(ts.coeffs), ts.dim, ts.level)
-
-# In-place copy with shape check (future-proof for pipelines)
-function Base.copy!(dest::Tensor, src::Tensor)
-    @assert dest.dim == src.dim && dest.level == src.level "Tensor shape mismatch"
+function Base.copy!(dest::Tensor{T,D,M}, src::Tensor{T,D,M}) where {T,D,M}
     copyto!(dest.coeffs, src.coeffs)
     return dest
 end
 
-dim(ts::Tensor)   = ts.dim
-level(ts::Tensor) = ts.level
-coeffs(ts::Tensor) = ts.coeffs
+# -------------------------------------------------------------------
+# 4. Helpers
+# -------------------------------------------------------------------
 
-# --- small helpers ------------------------------------------------------------
-
-@inline function _zero!(ts::Tensor{T}) where {T}
-    fill!(ts.coeffs, zero(T)); ts
-end
-
-@inline function add_scaled!(dest::Tensor{T}, src::Tensor{T}, α::T) where {T}
-    @inbounds @simd for i in eachindex(dest.coeffs, src.coeffs)
-        dest.coeffs[i] = muladd(α, src.coeffs[i], dest.coeffs[i])
-    end
-    dest
-end
-
-@inline _write_unit!(t::Tensor{T}) where {T} =
-    (t.coeffs[t.offsets[1] + 1] = one(T); t)
-
-function lift1!(ts::Tensor{T}, x::AbstractVector{T}) where {T}
-    @assert length(x) == ts.dim
-    fill!(ts.coeffs, zero(T))
-    @inbounds copyto!(ts.coeffs, 1, x, 1, ts.dim)  # write level-1 block
-    return ts
-end
-
-"""
-    exp!(out, x::AbstractVector)
-
-Compute the truncated tensor exponential of a level-1 element `x`:
-    exp(x) = x + x^2/2! + ... + x^m/m!
-(level-0 unit is implicit/not stored). Works for any Tensor backend.
-"""
-function exp!(out::Tensor{T}, x::AbstractVector{T}) where {T}
-    # Optimized SIMD path for Vector input into Dense Tensor
-    d = out.dim
-    m = out.level
-    out.coeffs[out.offsets[1] + 1] = one(T)
-    m == 0 && return nothing
-
-    idx    = out.offsets[2] + 1
-    curlen = d
-    copyto!(out.coeffs, idx, x, 1, d)
-    prev_start = idx
-    idx += curlen
-
-    if m == 1
-        return nothing
-    end
-
-    @inbounds for level in 2:m
-        prev_len  = curlen
-        curlen   *= d
-        cur_start = idx
-        scale = inv(T(level))
-        _segment_level_offsets!(out.coeffs, x, scale,
-                                prev_start, prev_len, cur_start)
-        prev_start = cur_start
-        idx += curlen
-    end
-    return nothing
-end
-
-# generic path: arbitrary first coefficients (a0, b0)
-@inline function mul!(
-    out_tensor::Tensor{T}, x1_tensor::Tensor{T}, x2_tensor::Tensor{T}
-) where {T}
-    out, x1, x2, m = out_tensor.coeffs, x1_tensor.coeffs, x2_tensor.coeffs, out_tensor.level
-    offsets = out_tensor.offsets
-    d = out_tensor.dim
-
-    a0 = x1[offsets[1] + 1]
-    b0 = x2[offsets[1] + 1]
-    out[offsets[1] + 1] = a0 * b0
-
-    out_len = d
-    @inbounds for k in 1:m
-        out_start = offsets[k + 1] + 1
-
-        # i = 0: out_k ← a0 * x2_k  (write-only; no zeroing)
-        b_start = offsets[k + 1]
-        if a0 == one(T)
-            copyto!(out, out_start, x2, b_start + 1, out_len)
-        elseif a0 == zero(T)
-            @avx for j in 1:out_len
-                out[out_start + j - 1] = zero(T)
-            end
-        else
-            @avx for j in 1:out_len
-                out[out_start + j - 1] = a0 * x2[b_start + j]
-            end
-        end
-
-        # middle terms: i = 1..k-1
-        a_len = d
-        for i in 1:(k-1)
-            a_start = offsets[i + 1]
-            b_start = offsets[k - i + 1]
-            b_len   = out_len ÷ a_len
-
-            @avx for ai in 1:a_len, bi in 1:b_len
-                row0 = out_start + (ai - 1) * b_len - 1
-                out[row0 + bi] = muladd(x1[a_start + ai], x2[b_start + bi], out[row0 + bi])
-            end
-
-            a_len *= d
-        end
-
-        # i = k: out_k += b0 * x1_k
-        if b0 != zero(T)
-            a_start = offsets[k + 1]
-            if b0 == one(T)
-                @avx for j in 1:out_len
-                    out[out_start + j - 1] += x1[a_start + j]
-                end
-            else
-                @avx for j in 1:out_len
-                    out[out_start + j - 1] = muladd(b0, x1[a_start + j], out[out_start + j - 1])
-                end
-            end
-        end
-
-        out_len *= d
-    end
-    return out
-end
-
-
-@inline function _segment_level_offsets!(
-    out::Vector{T}, Δ::AbstractVector{D}, scale::T,
-    prev_start::Int, prev_len::Int, cur_start::Int
-) where {T,D}
-    d = length(Δ)
-    @inbounds @avx for i in 1:d, j in 1:prev_len
-        s = scale * Δ[i]
-        base = cur_start + (i - 1) * prev_len - 1
-        out[base + j] = s * out[prev_start + j - 1]
-    end
-    return nothing
-end
-
-"""
-    level_starts0(dim::Int, level::Int) -> Vector{Int}
-
-Return a vector `s` of length `level + 1` with **0-based** start indices for the
-flattened tensor-series blocks of each level `k = 1..level` in column-major layout.
-
-Invariant:
-- `s[1] == 0`
-- `s[k+1] - s[k] == dim^k` (length of level-`k` block)
-- `s[level+1] == (dim^(level+1) - dim) ÷ (dim - 1)` (total length)
-"""
-function level_starts0(d, m)
+function level_starts0(d::Int, m::Int)
     offsets = Vector{Int}(undef, m + 2)
     offsets[1] = 0
     len = 1
@@ -231,8 +79,8 @@ function level_starts0(d, m)
         offsets[k+1] = offsets[k] + len
         len *= d
     end
-    # pad so level-1 (offsets[2]+1) is 64B-aligned for Float64
-    W = 8
+    # Padding logic for SIMD alignment
+    W = 8 
     pad = (W - (offsets[2] % W)) % W
     if pad != 0
         @inbounds for k in 2:length(offsets)
@@ -242,60 +90,191 @@ function level_starts0(d, m)
     return offsets
 end
 
-"""
-    log!(out::Tensor{T}, g::Tensor{T}) where T
+@inline function _zero!(ts::Tensor{T}) where {T}
+    fill!(ts.coeffs, zero(T))
+    return ts
+end
 
-Compute the truncated tensor logarithm of a group-like element `g` up to `out.level`,
-using the power-series:
-    log(g) = (g-1) - (g-1)^2/2 + (g-1)^3/3 - ...  (truncated at level m)
-All multiplications are done with `mul!`. The result has zero level-0.
-"""
-function log!(out::Tensor{T}, g::Tensor{T}) where {T}
-    @assert out.dim == g.dim && out.level == g.level "log!: shape mismatch"
-    m = out.level
-    m == 0 && (fill!(out.coeffs, zero(T)); return out)
+@inline function _write_unit!(t::Tensor{T}) where {T}
+    t.coeffs[t.offsets[1] + 1] = one(T)
+    return t
+end
 
-    offsets = out.offsets
-    i0 = offsets[1] + 1
+# -------------------------------------------------------------------
+# 5. Arithmetic Operations
+# -------------------------------------------------------------------
 
-    # Require group-like normalisation at level-0
-    @assert g.coeffs[i0] == one(T) "log!: expected level-0 == 1 (group-like element)"
+@inline function add_scaled!(dest::Tensor{T,D,M}, src::Tensor{T,D,M}, α::T) where {T,D,M}
+    @inbounds @turbo for i in eachindex(dest.coeffs, src.coeffs)
+        dest.coeffs[i] = muladd(α, src.coeffs[i], dest.coeffs[i])
+    end
+    dest
+end
 
-    # X := g - 1
-    X = similar(out)
-    copy!(X, g)
-    X.coeffs[i0] -= one(T)        # make level-0 of X zero
+@generated function mul!(
+    out_tensor::Tensor{T,D,M}, x1_tensor::Tensor{T,D,M}, x2_tensor::Tensor{T,D,M}
+) where {T,D,M}
+    off = level_starts0(D, M)
+    level_blocks = Expr[]
+    for k in 1:M
+        out_len = D^k; out_s = off[k+1] + 1
+        push!(level_blocks, quote
+            if a0 == one(T); copyto!(out, $out_s, x2, $out_s, $out_len)
+            elseif a0 == zero(T); @turbo for j in 0:$(out_len-1); out[$out_s + j] = zero(T); end
+            else; @turbo for j in 0:$(out_len-1); out[$out_s + j] = a0 * x2[$out_s + j]; end; end
+            
+            $(let inner = Expr[]
+                a_len = D
+                for i in 1:(k-1)
+                    b_len = D^(k-i)
+                    a_s = off[i+1] + 1; b_s = off[k-i+1] + 1
+                    push!(inner, quote
+                        for ai in 0:$(a_len-1)
+                            val_a = x1[$a_s + ai]
+                            row = $out_s + ai * $b_len
+                            @turbo for bi in 0:$(b_len-1); out[row + bi] += val_a * x2[$b_s + bi]; end
+                        end
+                    end)
+                    a_len *= D
+                end
+                Expr(:block, inner...)
+            end)
 
-    # Prepare accumulators/buffers
-    _zero!(out)                   # out ← 0 (and we'll ensure out.level-0 stays 0)
-    P = similar(out)              # current power (starts as X)
-    Q = similar(out)              # scratch for next power
-    copy!(P, X)
+            if b0 != zero(T)
+                if b0 == one(T); @turbo for j in 0:$(out_len-1); out[$out_s + j] += x1[$out_s + j]; end
+                else; @turbo for j in 0:$(out_len-1); out[$out_s + j] += b0 * x1[$out_s + j]; end; end
+            end
+        end)
+    end
+    quote
+        out = out_tensor.coeffs; x1 = x1_tensor.coeffs; x2 = x2_tensor.coeffs
+        a0 = x1[$(off[1]+1)]; b0 = x2[$(off[1]+1)]; out[$(off[1]+1)] = a0 * b0
+        @inbounds begin; $(Expr(:block, level_blocks...)); end
+        return out_tensor
+    end
+end
 
-    sgn = one(T)                  # (+1, -1, +1, ...)
-    for k in 1:m
-        # out += ((-1)^(k+1) / k) * P
+function log!(out::Tensor{T,D,M}, g::Tensor{T,D,M}) where {T,D,M}
+    i0 = out.offsets[1] + 1
+    X = similar(out); copy!(X, g); X.coeffs[i0] -= one(T)
+    _zero!(out); P = similar(out); copy!(P, X); Q = similar(out)
+    sgn = one(T)
+    for k in 1:M
         add_scaled!(out, P, sgn / T(k))
-
-        # Next power if needed: P ← P * X
-        if k < m
-            mul!(Q, P, X)
-            Q.coeffs[i0] = zero(T)  # enforce zero level-0 (should already be)
-            P, Q = Q, P             # swap buffers
+        if k < M
+            mul!(Q, P, X); Q.coeffs[i0] = zero(T); P, Q = Q, P
         end
         sgn = -sgn
     end
-
-    out.coeffs[i0] = zero(T)      # ensure level-0 is 0 for a Lie element
+    out.coeffs[i0] = zero(T)
     return out
 end
 
-"""
-    log(g::Tensor{T}) -> Tensor{T}
-
-Allocating wrapper for `log!`.
-"""
-function log(g::Tensor{T}) where {T}
+function log(g::Tensor{T,D,M}) where {T,D,M}
     out = similar(g)
     return log!(out, g)
+end
+
+# -------------------------------------------------------------------
+# 6. Kernels
+# -------------------------------------------------------------------
+
+@generated function update_signature_horner!(
+    A_tensor::Tensor{T,D,M}, 
+    z::SVector{D,T}, 
+    B1::AbstractVector{T},
+    B2::AbstractVector{T}
+) where {T,D,M}
+    off = level_starts0(D, M)
+    updates = Expr[]
+    for k in M:-1:2
+        ops = Expr[]
+        push!(ops, quote
+            inv_k = inv(T($k))
+            val_init = z * inv_k
+            unsafe_store!(Ptr{SVector{$D, T}}(pointer(B1)), val_init, 1)
+        end)
+        current_len = D 
+        for i in 1:(k-2)
+            next_scale = inv(T(k - i))
+            a_start = off[i+1]
+            src_buf = isodd(i) ? :B1 : :B2
+            dst_buf = isodd(i) ? :B2 : :B1
+            push!(ops, quote
+                len = $current_len
+                scale = $next_scale
+                ptr_src = pointer($src_buf); ptr_dst = pointer($dst_buf); ptr_coeffs = pointer(coeffs)
+                ptr_dst_sv = Ptr{SVector{$D, T}}(ptr_dst)
+                z_vec = z
+                for r in 1:len
+                    src_val = unsafe_load(ptr_src, r)
+                    coeff_val = unsafe_load(ptr_coeffs, $a_start + r)
+                    val = src_val + coeff_val
+                    res_vec = (val * scale) * z_vec
+                    unsafe_store!(ptr_dst_sv, res_vec, r)
+                end
+            end)
+            current_len *= D
+        end
+        last_iter_count = k - 2
+        final_src_buf = (last_iter_count > 0 && isodd(last_iter_count)) ? :B2 : :B1
+        prev_level_idx = k - 1
+        a_prev_start = off[prev_level_idx+1]
+        a_tgt_start  = off[k+1]
+        push!(ops, quote
+            len = $current_len
+            ptr_src = pointer($final_src_buf); ptr_coeffs = pointer(coeffs)
+            ptr_Ak_base = pointer(coeffs, $a_tgt_start + 1)
+            ptr_Ak_sv = Ptr{SVector{$D, T}}(ptr_Ak_base)
+            z_vec = z
+            for r in 1:len
+                src_val = unsafe_load(ptr_src, r)
+                coeff_val = unsafe_load(ptr_coeffs, $a_prev_start + r)
+                val = src_val + coeff_val
+                inc_vec = val * z_vec
+                unsafe_store!(ptr_Ak_sv, unsafe_load(ptr_Ak_sv, r) + inc_vec, r)
+            end
+        end)
+        push!(updates, Expr(:block, ops...))
+    end
+    push!(updates, quote
+        start_1 = $(off[2])
+        ptr_A1 = pointer(coeffs, start_1 + 1)
+        ptr_A1_sv = Ptr{SVector{$D, T}}(ptr_A1)
+        unsafe_store!(ptr_A1_sv, unsafe_load(ptr_A1_sv, 1) + z, 1)
+    end)
+    return quote
+        coeffs = A_tensor.coeffs
+        @inbounds begin; $(Expr(:block, updates...)); end
+        return nothing
+    end
+end
+
+@generated function exp!(out::Tensor{T,D,M}, x::SVector{D,T}) where {T,D,M}
+    off = level_starts0(D, M)
+    level_loops = Expr[]
+    for k in 2:M
+        prev_len = D^(k-1)
+        prev_s = off[k] + 1; cur_s = off[k+1] + 1
+        push!(level_loops, quote
+            scale = inv(T($k))
+            val_D = $D
+            for i in 1:val_D
+                val = scale * x[i]
+                dest = $cur_s + (i - 1) * $prev_len
+                @turbo for j in 0:$(prev_len - 1)
+                    coeffs[dest + j] = val * coeffs[$prev_s + j]
+                end
+            end
+        end)
+    end
+    quote
+        coeffs = out.coeffs
+        coeffs[$(off[1] + 1)] = one(T)
+        s1 = $(off[2] + 1)
+        val_D = $D
+        @inbounds for i in 1:val_D; coeffs[s1 + i - 1] = x[i]; end
+        @inbounds begin; $(Expr(:block, level_loops...)); end
+        return nothing
+    end
 end

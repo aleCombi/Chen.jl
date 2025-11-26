@@ -57,9 +57,9 @@ def ensure_uv_project():
             check=True,
         )
 
-    print("Ensuring Python deps via uv add (iisignature, numpy)...")
+    print("Ensuring Python deps via uv add (iisignature, numpy, pysiglib)...")
     subprocess.run(
-        ["uv", "add", "iisignature", "numpy"],
+        ["uv", "add", "iisignature", "numpy", "pysiglib"],
         cwd=SCRIPT_DIR,
         check=True,
     )
@@ -100,7 +100,7 @@ def run_julia_benchmark() -> Path:
 # -------- run Python benchmark --------
 
 def run_python_benchmark() -> Path:
-    print("=== Running Python/iisignature benchmark via uv ===")
+    print("=== Running Python benchmark suite via uv ===")
     result = subprocess.run(
         ["uv", "run", "benchmark.py"],
         cwd=SCRIPT_DIR,
@@ -125,7 +125,8 @@ def run_python_benchmark() -> Path:
 
 # -------- comparison logic --------
 
-def read_csv_by_key(path: Path):
+def read_julia_csv(path: Path):
+    """Read Julia CSV (no library column)"""
     rows_by_key = {}
     with path.open("r", encoding="utf-8", newline="") as f:
         reader = csv.DictReader(f)
@@ -134,21 +135,48 @@ def read_csv_by_key(path: Path):
             d = int(row["d"])
             m = int(row["m"])
             path_kind = row.get("path_kind", row.get("kind", "")).strip()
-            # New key: operation
             operation = row.get("operation", "signature").strip()
             
             key = (N, d, m, path_kind, operation)
             rows_by_key[key] = row
     return rows_by_key
 
-def compare_runs(julia_csv: Path, python_csv: Path, runs_dir: Path) -> Path:
-    julia_rows = read_csv_by_key(julia_csv)
-    python_rows = read_csv_by_key(python_csv)
+def read_python_csv(path: Path):
+    """Read Python CSV (with library column)"""
+    rows_by_key = {}
+    with path.open("r", encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            N = int(row["N"])
+            d = int(row["d"])
+            m = int(row["m"])
+            path_kind = row.get("path_kind", row.get("kind", "")).strip()
+            operation = row.get("operation", "signature").strip()
+            library = row.get("library", "python").strip()
+            
+            key = (N, d, m, path_kind, operation, library)
+            rows_by_key[key] = row
+    return rows_by_key
 
-    common_keys = sorted(set(julia_rows.keys()) & set(python_rows.keys()))
+def compare_runs(julia_csv: Path, python_csv: Path, runs_dir: Path) -> Path:
+    julia_rows = read_julia_csv(julia_csv)
+    python_rows = read_python_csv(python_csv)
+
+    # Extract unique libraries from Python results
+    libraries = set()
+    for key in python_rows.keys():
+        libraries.add(key[5])  # library is the 6th element
+    
+    print(f"Found Python libraries: {', '.join(sorted(libraries))}")
+    
+    # Find common benchmark configurations (without library)
+    julia_keys = set((k[0], k[1], k[2], k[3], k[4]) for k in julia_rows.keys())
+    python_keys = set((k[0], k[1], k[2], k[3], k[4]) for k in python_rows.keys())
+    common_keys = sorted(julia_keys & python_keys)
+    
     if not common_keys:
-        print("Julia keys sample:", list(julia_rows.keys())[:5])
-        print("Python keys sample:", list(python_rows.keys())[:5])
+        print("Julia keys sample:", list(julia_keys)[:5])
+        print("Python keys sample:", list(python_keys)[:5])
         raise RuntimeError("No overlapping benchmark keys between Julia and Python CSVs.")
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -160,6 +188,7 @@ def compare_runs(julia_csv: Path, python_csv: Path, runs_dir: Path) -> Path:
         "m",
         "path_kind",
         "operation",
+        "python_library",
         "t_ms_julia",
         "t_ms_python",
         "speed_ratio_python_over_julia",
@@ -175,32 +204,59 @@ def compare_runs(julia_csv: Path, python_csv: Path, runs_dir: Path) -> Path:
 
         for (N, d, m, path_kind, operation) in common_keys:
             jr = julia_rows[(N, d, m, path_kind, operation)]
-            pr = python_rows[(N, d, m, path_kind, operation)]
-
             t_jl = float(jr["t_ms"])
-            t_py = float(pr["t_ms"])
             alloc_jl = float(jr["alloc_KiB"])
-            alloc_py = float(pr["alloc_KiB"])
 
-            speed_ratio = t_py / t_jl if t_jl > 0 else float("nan")
+            # Compare against each available Python library
+            for lib in libraries:
+                py_key = (N, d, m, path_kind, operation, lib)
+                if py_key not in python_rows:
+                    continue
+                    
+                pr = python_rows[py_key]
+                t_py = float(pr["t_ms"])
+                alloc_py = float(pr["alloc_KiB"])
 
-            writer.writerow(
-                {
-                    "N": N,
-                    "d": d,
-                    "m": m,
-                    "path_kind": path_kind,
-                    "operation": operation,
-                    "t_ms_julia": t_jl,
-                    "t_ms_python": t_py,
-                    "speed_ratio_python_over_julia": speed_ratio,
-                    "alloc_KiB_julia": alloc_jl,
-                    "alloc_KiB_python": alloc_py,
-                }
-            )
+                speed_ratio = t_py / t_jl if t_jl > 0 else float("nan")
+
+                writer.writerow(
+                    {
+                        "N": N,
+                        "d": d,
+                        "m": m,
+                        "path_kind": path_kind,
+                        "operation": operation,
+                        "python_library": lib,
+                        "t_ms_julia": t_jl,
+                        "t_ms_python": t_py,
+                        "speed_ratio_python_over_julia": speed_ratio,
+                        "alloc_KiB_julia": alloc_jl,
+                        "alloc_KiB_python": alloc_py,
+                    }
+                )
 
     print("===" * 20)
     print(f"Comparison CSV written to: {out_path}")
+    
+    # Print summary statistics
+    print("\n=== SUMMARY ===")
+    with out_path.open("r", encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        by_library = {}
+        for row in reader:
+            lib = row["python_library"]
+            ratio = float(row["speed_ratio_python_over_julia"])
+            if lib not in by_library:
+                by_library[lib] = []
+            by_library[lib].append(ratio)
+    
+    for lib in sorted(by_library.keys()):
+        ratios = by_library[lib]
+        avg_ratio = sum(ratios) / len(ratios)
+        min_ratio = min(ratios)
+        max_ratio = max(ratios)
+        print(f"{lib:>15s}: avg speedup = {avg_ratio:.2f}x, range = [{min_ratio:.2f}x, {max_ratio:.2f}x]")
+    
     return out_path
 
 def main():

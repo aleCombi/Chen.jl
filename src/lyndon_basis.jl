@@ -1,4 +1,3 @@
-# src/lyndon_basis.jl
 using LinearAlgebra
 
 function is_lyndon(w::Word)
@@ -47,27 +46,23 @@ function _longest_lyndon_suffix(w::Word, lynds::Vector{Word})
     error("No Lyndon suffix for $w")
 end
 
-# helper to read dense coeff
-# FIXED: Chen.Tensor -> Tensor
-@inline function _coeff_of_word(t::Tensor{T}, w::Word) where {T}
-    d = t.dim
+# FIXED: Use D from type
+@inline function _coeff_of_word(t::Tensor{T,D,M}, w::Word) where {T,D,M}
     k = length(w)
+    if k > M; return zero(T); end
     start0 = t.offsets[k+1]
     pos1   = 1
     @inbounds for j in 1:k
-        pos1 += (w.indices[j]-1) * d^(k-j)
+        pos1 += (w.indices[j]-1) * D^(k-j)
     end
     return t.coeffs[start0 + pos1]
 end
 
-# This builds the L matrix using SPARSE logic (cleaner) but caches Dense results?
-# Let's clean this up to use Sparse internally as discussed.
 function build_L(d::Int, N::Int; T=Float64)
     lynds = lyndon_words(d, N)
     m = length(lynds)
     L = zeros(T, m, m)
     
-    # Use SparseTensor for the symbolic calculation
     Φcache = Dict{Word, SparseTensor{T}}()
 
     for (j, w) in enumerate(lynds)
@@ -81,13 +76,10 @@ function build_L(d::Int, N::Int; T=Float64)
             Φu = Φcache[u]
             Φv = Φcache[v]
             
-            # Compute Lie bracket: [u, v] = u⊗v - v⊗u
-            # We use the generic bracket from sparse_tensors.jl
             tmp1 = similar(Φu); mul!(tmp1, Φu, Φv)
             tmp2 = similar(Φu); mul!(tmp2, Φv, Φu)
             Φw = tmp1 - tmp2
             
-            # Read coeffs
             for (i, wi) in enumerate(lynds)
                 L[i,j] = get(Φw.coeffs, wi, zero(T))
             end
@@ -97,8 +89,9 @@ function build_L(d::Int, N::Int; T=Float64)
     return lynds, L, Φcache
 end
 
-# FIXED: Chen.Tensor -> Tensor
-function project_to_lyndon(u_dense::Tensor{T}, lynds::Vector{Word}, L::Matrix{T}) where {T}
+# FIXED: Allow T1 and T2 to differ (e.g. Float32 tensor, Float64 matrix)
+function project_to_lyndon(u_dense::Tensor{T1}, lynds::Vector{Word}, L::Matrix{T2}) where {T1,T2}
+    T = promote_type(T1, T2)
     m = length(lynds)
     u = zeros(T, m)
     @inbounds for i in 1:m

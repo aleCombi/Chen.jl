@@ -1,0 +1,44 @@
+[project]
+name = "chen-signatures"
+version = "0.1.6"
+description = "Fast rough path signatures - faster than iisignature, comparable to pysiglib"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [
+    {name = "Alessandro Combi", email = "alecombi94@gmail.com"}
+]
+keywords = ["signatures", "rough-paths", "time-series", "machine-learning"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Mathematics",
+]
+
+dependencies = [
+    "juliacall>=0.9.20",
+    "numpy>=1.20.0",
+]
+
+[project.optional-dependencies]
+benchmark = ["pysiglib>=0.2.2", "iisignature>=0.24", "pytest"]
+
+[project.urls]
+Homepage = "https://github.com/aleCombi/Chen.jl"
+Repository = "https://github.com/aleCombi/Chen.jl"
+Issues = "https://github.com/aleCombi/Chen.jl/issues"
+
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["chen*"]
