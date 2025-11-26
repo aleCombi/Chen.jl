@@ -9,10 +9,11 @@ using Chen
 # ------------------------------------------------------------------
 const D    = 5      # path dimension
 const M    = 5      # signature level
-const Nseg = 1000    # number of segments in the path
+const Nseg = 1000   # number of segments in the path
 const N    = Nseg + 1
 
-const AT = Chen.Tensor{Float64}
+# Concrete Chen backend with fixed level M
+const AT = Chen.Tensor{Float64, M}
 
 rng = MersenneTwister(1234)
 
@@ -20,7 +21,7 @@ rng = MersenneTwister(1234)
 path = [@SVector rand(rng, Float64, D) for _ in 1:N]
 
 # Base tensors / buffers
-out = AT(D, M)
+out = AT(D)
 a   = similar(out)
 b   = similar(out)
 seg = similar(out)
@@ -38,8 +39,8 @@ println("=== exp! microbenchmark ===")
 # ------------------------------------------------------------------
 # mul! (generic) – arbitrary tensors, not necessarily group-like
 # ------------------------------------------------------------------
-x1_generic = AT(D, M)
-x2_generic = AT(D, M)
+x1_generic = AT(D)
+x2_generic = AT(D)
 rand!(x1_generic.coeffs)
 rand!(x2_generic.coeffs)
 
@@ -49,8 +50,8 @@ println("\n=== mul! (generic) microbenchmark ===")
 # ------------------------------------------------------------------
 # mul_grouplike! – inputs constructed via exp! (so level-0 == 1)
 # ------------------------------------------------------------------
-x1_gl = AT(D, M)
-x2_gl = AT(D, M)
+x1_gl = AT(D)
+x2_gl = AT(D)
 
 Δ1 = @SVector rand(rng, Float64, D)
 Δ2 = @SVector rand(rng, Float64, D)
@@ -83,4 +84,6 @@ end setup = (Chen.exp!($a, $Δ0))          # a is group-like before each sample
 # Full signature_path! for comparison
 # ------------------------------------------------------------------
 println("\n=== full signature_path! (for comparison) ===")
-@btime Chen.signature_path!($out, $path);
+t_full = @belapsed Chen.signature_path!($out, $path)
+println("signature_path!: $(t_full * 1e3) ms total  (Nseg = $Nseg)")
+println("per segment ≈ $(t_full / Nseg * 1e6) μs/segment")
