@@ -2,7 +2,7 @@ using StaticArrays
 using LoopVectorization: @avx, @turbo
 
 # -------------------------------------------------------------------
-# Tensor type: specialize on Level M AND Dimension D
+# Tensor type
 # -------------------------------------------------------------------
 
 struct Tensor{T,D,M} <: AbstractTensor{T}
@@ -10,20 +10,16 @@ struct Tensor{T,D,M} <: AbstractTensor{T}
     offsets::Vector{Int}
 end
 
-# Accessors
 dim(::Tensor{T,D,M}) where {T,D,M} = D
 level(::Tensor{T,D,M}) where {T,D,M} = M
 Base.parent(ts::Tensor) = ts.coeffs
 coeffs(ts::Tensor) = ts.coeffs
 offsets(ts::Tensor) = ts.offsets
-
 Base.eltype(::Tensor{T,D,M}) where {T,D,M} = T
 Base.length(ts::Tensor) = length(ts.coeffs)
 @inline Base.getindex(ts::Tensor, i::Int) = @inbounds ts.coeffs[i]
 @inline Base.setindex!(ts::Tensor, v, i::Int) = @inbounds (ts.coeffs[i] = v)
-
-Base.show(io::IO, ts::Tensor{T,D,M}) where {T,D,M} =
-    print(io, "Tensor{T=$T, D=$D, M=$M}(length=$(length(ts.coeffs)))")
+Base.show(io::IO, ts::Tensor{T,D,M}) where {T,D,M} = print(io, "Tensor{T=$T, D=$D, M=$M}")
 
 # -------------------------------------------------------------------
 # Constructors
@@ -37,7 +33,7 @@ end
 
 function Tensor{T,D,M}(coeffs::Vector{T}) where {T,D,M}
     offsets = level_starts0(D, M)
-    @assert length(coeffs) == offsets[end] "Coefficient length mismatch"
+    @assert length(coeffs) == offsets[end]
     return Tensor{T,D,M}(coeffs, offsets)
 end
 
@@ -46,17 +42,11 @@ function Tensor(coeffs::Vector{T}, d::Int, m::Int) where {T}
 end
 
 @generated function _make_tensor(coeffs::Vector{T}, ::Val{D}, ::Val{M}) where {T,D,M}
-    quote
-        return Tensor{T,D,M}(coeffs)
-    end
+    quote; return Tensor{T,D,M}(coeffs); end
 end
 
 Base.similar(ts::Tensor{T,D,M}) where {T,D,M} = Tensor{T,D,M}()
-Base.similar(ts::Tensor{T,D,M}, ::Type{S}) where {T,D,M,S} = Tensor{S,D,M}()
-
-Base.copy(ts::Tensor{T,D,M}) where {T,D,M} = 
-    Tensor{T,D,M}(copy(ts.coeffs), ts.offsets)
-
+Base.copy(ts::Tensor{T,D,M}) where {T,D,M} = Tensor{T,D,M}(copy(ts.coeffs), ts.offsets)
 function Base.copy!(dest::Tensor{T,D,M}, src::Tensor{T,D,M}) where {T,D,M}
     copyto!(dest.coeffs, src.coeffs)
     return dest
@@ -68,44 +58,35 @@ end
 
 function level_starts0(d::Int, m::Int)
     offsets = Vector{Int}(undef, m + 2)
-    offsets[1] = 0
-    len = 1
+    offsets[1] = 0; len = 1
     @inbounds for k in 1:m+1
         offsets[k+1] = offsets[k] + len
         len *= d
     end
-    # Padding for alignment (64-byte / 8 doubles)
-    W = 8 
-    pad = (W - (offsets[2] % W)) % W
+    W = 8; pad = (W - (offsets[2] % W)) % W
     if pad != 0
-        @inbounds for k in 2:length(offsets)
-            offsets[k] += pad
-        end
+        @inbounds for k in 2:length(offsets); offsets[k] += pad; end
     end
     return offsets
 end
 
-@inline function _zero!(ts::Tensor{T}) where {T}
-    fill!(ts.coeffs, zero(T)); ts
-end
-
-@inline _write_unit!(t::Tensor{T}) where {T} =
-    (t.coeffs[t.offsets[1] + 1] = one(T); t)
+@inline _write_unit!(t::Tensor{T}) where {T} = (t.coeffs[t.offsets[1] + 1] = one(T); t)
 
 # -------------------------------------------------------------------
-# Horner's Method Kernel (The Algorithm from pySigLib)
+# Ping-Pong Horner Kernel
 # -------------------------------------------------------------------
 
 """
-    update_signature_horner!(A, z, B)
+    update_signature_horner!(A, z, B1, B2)
 
-Updates signature tensor A in-place using increment vector z via Horner's method.
-B is a scratch buffer of the same type as A (used for intermediate B_k).
+Updates signature A using increment z.
+Uses two scratch buffers B1/B2 to allow strictly forward memory access.
 """
 @generated function update_signature_horner!(
     A_tensor::Tensor{T,D,M}, 
     z::SVector{D,T}, 
-    B_tensor::Tensor{T,D,M}
+    B1::AbstractVector{T},
+    B2::AbstractVector{T}
 ) where {T,D,M}
     
     off = level_starts0(D, M)
@@ -116,70 +97,87 @@ B is a scratch buffer of the same type as A (used for intermediate B_k).
         
         ops = Expr[]
         
-        # 1. Initialize B (scratch) for this level
-        # B starts as A_0 ⊗ z/k. Since A_0=1, B = z/k.
+        # 1. Initialize B1 (scratch) for this level
+        # B1 = z / k
         push!(ops, quote
             inv_k = inv(T($k))
             val_D = $D
             @turbo for d in 1:val_D
-                B[d] = z[d] * inv_k
+                B1[d] = z[d] * inv_k
             end
         end)
         
-        current_B_len = D
+        current_len = D
         
-        # 2. Accumulate intermediate terms (A_i) and expand B
+        # 2. Accumulate intermediate terms (A_i) and expand
         # Loop i from 1 to k-2
+        # We ping-pong between B1 and B2
+        
+        # Track which buffer is 'source' and 'dest' via a compile-time boolean
+        # source_is_B1 = true
+        
+        # Unroll the accumulation loop
         for i in 1:(k-2)
             
             next_scale = inv(T(k - i))
-            a_start = off[i+1] # Offset for A_i
+            a_start = off[i+1]
             
-            # Step 2a: B = B + A_i
-            # Step 2b: B = B ⊗ (z * next_scale)
-            # We perform expansion backwards to do it in-place in B.
+            # This iteration: Expand Source -> Dest
+            # If i is odd:  Src=B1, Dst=B2
+            # If i is even: Src=B2, Dst=B1
+            
+            src_buf = isodd(i) ? :B1 : :B2
+            dst_buf = isodd(i) ? :B2 : :B1
             
             push!(ops, quote
-                # a. Add A_i to B
-                lim_B = $current_B_len
-                @turbo for x in 1:lim_B
-                    B[x] += coeffs[$a_start + x]
-                end
-                
-                # b. Expand B (Backwards iteration)
-                s = $next_scale
+                len = $current_len
+                scale = $next_scale
                 val_D = $D
                 
-                # Iterate backwards to allow in-place update
-                for r in lim_B:-1:1
-                   val = B[r]
-                   base_idx = (r-1)*val_D
-                   
-                   @turbo for c in 1:val_D
-                       B[base_idx + c] = val * z[c] * s
-                   end
+                # We iterate linearly forward! 
+                # src[r] contains the accumulated value for index r
+                # We expand it into Dst[ (r-1)*D + 1 ... ]
+                
+                for r in 1:len
+                    # 1. Read accumulator + A_i
+                    val = $src_buf[r] + coeffs[$a_start + r]
+                    
+                    # 2. Write expanded block
+                    base_idx = (r-1)*val_D
+                    
+                    @turbo for c in 1:val_D
+                        $dst_buf[base_idx + c] = val * z[c] * scale
+                    end
                 end
             end)
             
-            current_B_len *= D
+            current_len *= D
         end
         
         # 3. Final Step for Level k
-        # Add A_{k-1} to B, then multiply by z (scale 1), and add result directly to A_k.
+        # Read from the current 'Source' buffer, Add A_{k-1}, Multiply z, Write to A_k
+        
+        # Determining final source buffer
+        # If (k-2) was the last step:
+        # If (k-2) was odd, result is in B2.
+        # If (k-2) was even (or 0 loops), result is in B1.
+        
+        last_iter_count = k - 2
+        final_src_buf = (last_iter_count > 0 && isodd(last_iter_count)) ? :B2 : :B1
         
         prev_level_idx = k - 1
         a_prev_start = off[prev_level_idx+1]
         a_tgt_start  = off[k+1]
         
         push!(ops, quote
+            len = $current_len
             val_D = $D
-            lim_B = $current_B_len
-            # Loop over elements of B (which corresponds to level k-1 size)
-            for r in 1:lim_B
-                # val = B[r] + A_{k-1}[r]
-                val = B[r] + coeffs[$a_prev_start + r]
+            
+            for r in 1:len
+                # val = B_final[r] + A_{k-1}[r]
+                val = $final_src_buf[r] + coeffs[$a_prev_start + r]
                 
-                # Expand into A_k
+                # Expand directly into A_k
                 base_idx = $a_tgt_start + (r-1)*val_D
                 
                 @turbo for c in 1:val_D
@@ -191,7 +189,7 @@ B is a scratch buffer of the same type as A (used for intermediate B_k).
         push!(updates, Expr(:block, ops...))
     end
     
-    # Handle Level 1: A_1 = A_1 + z
+    # Handle Level 1
     push!(updates, quote
         start_1 = $(off[2])
         val_D = $D
@@ -202,7 +200,6 @@ B is a scratch buffer of the same type as A (used for intermediate B_k).
 
     return quote
         coeffs = A_tensor.coeffs
-        B      = B_tensor.coeffs
         
         @inbounds begin
             $(Expr(:block, updates...))
@@ -290,8 +287,7 @@ end
 function log!(out::Tensor{T,D,M}, g::Tensor{T,D,M}) where {T,D,M}
     i0 = out.offsets[1] + 1
     X = similar(out); copy!(X, g); X.coeffs[i0] -= one(T)
-    _zero!(out)
-    P = similar(out); copy!(P, X); Q = similar(out)
+    _zero!(out); P = similar(out); copy!(P, X); Q = similar(out)
     sgn = one(T)
     for k in 1:M
         add_scaled!(out, P, sgn / T(k))
