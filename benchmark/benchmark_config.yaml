@@ -1,8 +1,8 @@
-path_kind: "linear"
-Ns: [1000]
-Ds: [3]
-Ms: [7]
-operations: ["signature"]
+path_kind: "sin"
+Ns: [5, 10, 20]
+Ds: [2, 5, 7]
+Ms: [3, 5, 7]
+operations: ["logsignature"]
 runs_dir: "runs"
 repeats: 20
 logsig_method: "S"
