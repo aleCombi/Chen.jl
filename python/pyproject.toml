@@ -25,6 +25,7 @@ classifiers = [
 dependencies = [
     "juliacall>=0.9.20",
     "numpy>=1.20.0",
+    "pysiglib>=0.2.2",
 ]
 
 [project.urls]

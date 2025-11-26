@@ -16,7 +16,7 @@ except ImportError:
     HAS_PYSIGLIB = False
 
 # --- Setup ---
-N, d, m = 1000, 10, 5
+N, d, m = 1000, 5, 7
 # Ensure C-contiguous array (pysiglib is picky about memory layout)
 path = np.ascontiguousarray(np.random.randn(N, d))
 
@@ -55,12 +55,12 @@ else:
 # --- 3. pysiglib ---
 if HAS_PYSIGLIB:
     # Warmup
-    _ = pysiglib.compute_signature(path, m)
+    _ = pysiglib.signature(path, m)
     
     times = []
     for _ in range(20):
         t0 = time.perf_counter()
-        pysiglib.compute_signature(path, m)
+        pysiglib.signature(path, m)
         times.append(time.perf_counter() - t0)
     t_pysiglib = min(times) * 1000
     
