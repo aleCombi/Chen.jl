@@ -6,10 +6,10 @@ path_kind: "sin"
 Ns: [2, 3, 4]
 
 # d scaling (row 2)
-Ds: [2, 4, 8, 10]
+Ds: [2, 4, 8]
 
 # m scaling (row 3)
-Ms: [2, 3, 4, 5, 6, 7, 8]
+Ms: [2, 3, 4]
 
 operations: ["logsignature", "signature"]
 

@@ -96,6 +96,8 @@ end
 
 # -------- sweep + write grid to file --------
 
+# -------- sweep + write grid to file --------
+
 function run_bench()
     cfg = load_config()
     Ns, Ds, Ms = cfg.Ns, cfg.Ds, cfg.Ms
@@ -119,11 +121,20 @@ function run_bench()
         push!(results, bench_case(d, m, N, path_kind, op, repeats))
     end
 
-    runs_path = joinpath(@__DIR__, runs_dir)
-    isdir(runs_path) || mkpath(runs_path)
+    # Base runs dir (for standalone Julia usage)
+    base_runs_path = joinpath(@__DIR__, runs_dir)
+    isdir(base_runs_path) || mkpath(base_runs_path)
 
-    ts = Dates.format(Dates.now(), "yyyymmdd_HHMMSS")
-    file = joinpath(runs_path, "run_julia_$ts.csv")
+    # Allow orchestrator to override output path
+    custom_csv = get(ENV, "BENCHMARK_OUT_CSV", "")
+    if !isempty(custom_csv)
+        file = custom_csv
+        run_path = dirname(file)
+        isdir(run_path) || mkpath(run_path)
+    else
+        ts   = Dates.format(Dates.now(), "yyyymmdd_HHMMSS")
+        file = joinpath(base_runs_path, "run_julia_$ts.csv")
+    end
 
     header = ["N", "d", "m", "path_kind", "operation", "t_ms", "alloc_KiB"]
     data = Array{Any}(undef, length(results) + 1, length(header))

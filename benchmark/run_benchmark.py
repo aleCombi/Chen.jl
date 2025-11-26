@@ -1,5 +1,4 @@
 # run_benchmarks.py
-
 import csv
 import re
 import subprocess
@@ -7,8 +6,9 @@ import ast
 import os
 from pathlib import Path
 from datetime import datetime
+import shutil
 
-import matplotlib.pyplot as plt  # NEW
+import matplotlib.pyplot as plt
 
 # This is the folder where THIS file lives: .../Chen/benchmark
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -67,12 +67,12 @@ def ensure_uv_project():
     )
 
 # -------- run Julia benchmark --------
-
-def run_julia_benchmark() -> Path:
+def run_julia_benchmark(run_dir: Path, base_env: dict) -> Path:
     print("=== Running Julia benchmark in local project ===")
 
-    env = os.environ.copy()
+    env = base_env.copy()
     env["JULIA_PROJECT"] = str(SCRIPT_DIR)
+    env["BENCHMARK_OUT_CSV"] = str(run_dir / "run_julia.csv")
 
     julia_script = str(SCRIPT_DIR / "benchmark.jl")
 
@@ -83,6 +83,10 @@ def run_julia_benchmark() -> Path:
         capture_output=True,
         env=env,
     )
+
+    # Save logs
+    (run_dir / "julia_stdout.log").write_text(result.stdout, encoding="utf-8")
+    (run_dir / "julia_stderr.log").write_text(result.stderr, encoding="utf-8")
 
     print(result.stdout)
     if result.returncode != 0:
@@ -99,16 +103,25 @@ def run_julia_benchmark() -> Path:
     print(f"Julia CSV: {julia_csv}")
     return julia_csv
 
-# -------- run Python benchmark --------
 
-def run_python_benchmark() -> Path:
+# -------- run Python benchmark --------
+def run_python_benchmark(run_dir: Path, base_env: dict) -> Path:
     print("=== Running Python benchmark suite via uv ===")
+
+    env = base_env.copy()
+    env["BENCHMARK_RUN_DIR"] = str(run_dir)
+
     result = subprocess.run(
         ["uv", "run", "benchmark.py"],
         cwd=SCRIPT_DIR,
         text=True,
         capture_output=True,
+        env=env,
     )
+
+    # Save logs
+    (run_dir / "python_stdout.log").write_text(result.stdout, encoding="utf-8")
+    (run_dir / "python_stderr.log").write_text(result.stderr, encoding="utf-8")
 
     print(result.stdout)
     if result.returncode != 0:
@@ -181,8 +194,7 @@ def compare_runs(julia_csv: Path, python_csv: Path, runs_dir: Path) -> Path:
         print("Python keys sample:", list(python_keys)[:5])
         raise RuntimeError("No overlapping benchmark keys between Julia and Python CSVs.")
 
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    out_path = runs_dir / f"comparison_{ts}.csv"
+    out_path = runs_dir / "comparison.csv"
 
     fieldnames = [
         "N",
@@ -430,14 +442,37 @@ def make_plots(comparison_csv: Path, runs_dir: Path, cfg: dict):
 # -------- main --------
 
 def main():
-    cfg, runs_dir = load_config()
-    print(f"Using runs_dir from config: {runs_dir}")
+    cfg, runs_root = load_config()
+    print(f"Using runs root from config: {runs_root}")
+
+    # One directory per run
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_dir = runs_root / f"run_{ts}"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Current run directory: {run_dir}")
+
+    # Dump config snapshot
+    cfg_copy_path = run_dir / "benchmark_config.yaml"
+    if CONFIG_PATH.exists():
+        shutil.copy2(CONFIG_PATH, cfg_copy_path)
+    else:
+        cfg_copy_path.write_text("# benchmark_config.yaml not found at run time\n", encoding="utf-8")
+
+    # Dump "effective" config (after defaults) for debugging
+    cfg_effective_path = run_dir / "config_effective.txt"
+    with cfg_effective_path.open("w", encoding="utf-8") as f:
+        f.write("Effective benchmark config (Python view)\n")
+        f.write("=======================================\n")
+        for k, v in sorted(cfg.items()):
+            f.write(f"{k}: {v!r}\n")
+
+    base_env = os.environ.copy()
 
     ensure_uv_project()
-    julia_csv = run_julia_benchmark()
-    python_csv = run_python_benchmark()
-    comparison_csv = compare_runs(julia_csv, python_csv, runs_dir)
-    make_plots(comparison_csv, runs_dir, cfg)
+    julia_csv = run_julia_benchmark(run_dir, base_env)
+    python_csv = run_python_benchmark(run_dir, base_env)
+    comparison_csv = compare_runs(julia_csv, python_csv, run_dir)
+    make_plots(comparison_csv, run_dir, cfg)
 
 if __name__ == "__main__":
     main()

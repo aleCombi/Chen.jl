@@ -1,5 +1,5 @@
 # benchmark.py
-
+import os
 import csv
 import math
 import time
@@ -253,7 +253,14 @@ def run_bench():
     print(f"  pysiglib      = {'available' if HAS_PYSIGLIB else 'NOT AVAILABLE'}")
 
     script_dir = Path(__file__).resolve().parent
-    runs_path = script_dir / runs_dir
+
+    # If BENCHMARK_RUN_DIR is set, we write everything there.
+    env_run_dir = os.environ.get("BENCHMARK_RUN_DIR")
+    if env_run_dir:
+        runs_path = Path(env_run_dir)
+    else:
+        runs_path = script_dir / runs_dir
+
     runs_path.mkdir(parents=True, exist_ok=True)
 
     results = []
@@ -264,7 +271,8 @@ def run_bench():
                 for op in operations:
                     # Benchmark iisignature
                     if HAS_IISIG:
-                        res = bench_iisignature(d, m, N, path_kind, op, logsig_method, repeats=repeats)
+                        res = bench_iisignature(d, m, N, path_kind, op,
+                                                logsig_method, repeats=repeats)
                         if res is not None:
                             results.append(res)
                     
