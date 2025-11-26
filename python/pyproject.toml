@@ -1,6 +1,6 @@
 [project]
 name = "chen-signatures"
-version = "0.1.6"
+version = "0.1.7"
 description = "Fast rough path signatures - faster than iisignature, comparable to pysiglib"
 readme = "README.md"
 requires-python = ">=3.9"

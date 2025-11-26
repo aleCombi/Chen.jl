@@ -2,14 +2,20 @@ from pathlib import Path
 import numpy as np
 from juliacall import Main as jl
 
+
 def _find_local_project():
     """
-    Detects if we are running from a local development environment
-    (i.e. the ChenSignatures.jl repository exists two levels up).
+    Detect whether we're running from the ChenSignatures.jl repo checkout.
+
+    Layout assumed:
+      repo_root/
+        Project.toml
+        python/
+          chen/
+            __init__.py  (this file)
     """
     this_file = Path(__file__).resolve()
-    # python/chen/__init__.py -> parents[2] is the repo root
-    repo_root = this_file.parents[2]
+    repo_root = this_file.parents[2]  # python/chen/__init__.py -> repo root
     if (repo_root / "Project.toml").exists():
         return repo_root
     return None
@@ -17,10 +23,11 @@ def _find_local_project():
 
 def _ensure_chen_loaded():
     """
-    Ensures the Julia backend is installed and loaded.
-    - If local dev: use Pkg.develop on the repository root.
-    - If installed normally: add ChenSignatures.jl from GitHub branch `python_package`
-      only if it's not already in the active Julia project.
+    Ensure the Julia backend (ChenSignatures.jl) is installed and loaded.
+
+    - Local dev: use Pkg.develop on the repository root.
+    - PyPI install: prefer registered package `ChenSignatures`, and
+      fall back to adding from GitHub if needed.
     """
     local = _find_local_project()
 
@@ -29,25 +36,30 @@ def _ensure_chen_loaded():
         proj = local.as_posix()
         jl.seval(f"""
             import Pkg
-            # Only develop once per Julia environment
             if !haskey(Pkg.project().dependencies, "ChenSignatures")
                 Pkg.develop(path = "{proj}")
             end
         """)
     else:
-        # PyPI-installed mode: install ChenSignatures.jl from GitHub only if missing
-        jl.seval("""
+        # Installed-from-PyPI mode
+        jl.seval(r"""
             import Pkg
             if !haskey(Pkg.project().dependencies, "ChenSignatures")
-                Pkg.add(Pkg.PackageSpec(
-                    url = "https://github.com/aleCombi/ChenSignatures.jl",
-                    rev = "master",
-                ))
+                try
+                    # Prefer registered package
+                    Pkg.add("ChenSignatures")
+                catch err
+                    @warn "Pkg.add(\"ChenSignatures\") failed, falling back to GitHub url" err
+                    Pkg.add(Pkg.PackageSpec(
+                        url = "https://github.com/aleCombi/ChenSignatures.jl",
+                    ))
+                end
             end
         """)
 
-    # Now load Chen
+    # Load the Julia module
     jl.seval("using ChenSignatures")
+
 
 # Initialize Julia environment on import
 _ensure_chen_loaded()
@@ -56,36 +68,33 @@ _ensure_chen_loaded()
 def sig(path, m: int) -> np.ndarray:
     """
     Compute the truncated signature of the path up to level m.
-    
+
     Args:
         path: (N, d) array-like input
         m: truncation level
+
     Returns:
         (d + d^2 + ... + d^m,) flattened array
     """
-    # Ensure memory is contiguous for optimal transfer to Julia
     arr = np.ascontiguousarray(path)
-    # Call Julia function
     res = jl.ChenSignatures.sig(arr, m)
-    # Convert Julia Vector back to NumPy array
     return np.asarray(res)
 
 
 def logsig(path, m: int) -> np.ndarray:
     """
     Compute the log-signature projected onto the Lyndon basis.
-    
+
     Args:
         path: (N, d) array-like input
         m: truncation level
+
     Returns:
         Array of log-signature coefficients
     """
     arr = np.ascontiguousarray(path)
     d = arr.shape[1]
-    
-    # We hold the BasisCache object in Python as a managed Julia object
+
     basis = jl.ChenSignatures.prepare(d, m)
-    
     res = jl.ChenSignatures.logsig(arr, basis)
     return np.asarray(res)
