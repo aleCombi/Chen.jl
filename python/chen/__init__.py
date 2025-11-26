@@ -35,7 +35,7 @@ def _ensure_chen_loaded():
             import Pkg
             Pkg.add(Pkg.PackageSpec(
                 url="https://github.com/aleCombi/Chen.jl",
-                rev="main" 
+                rev="python_package" 
             ))
             """
         )
