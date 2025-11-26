@@ -15,11 +15,14 @@ level(::Tensor{T,D,M}) where {T,D,M} = M
 Base.parent(ts::Tensor) = ts.coeffs
 coeffs(ts::Tensor) = ts.coeffs
 offsets(ts::Tensor) = ts.offsets
+
 Base.eltype(::Tensor{T,D,M}) where {T,D,M} = T
 Base.length(ts::Tensor) = length(ts.coeffs)
 @inline Base.getindex(ts::Tensor, i::Int) = @inbounds ts.coeffs[i]
 @inline Base.setindex!(ts::Tensor, v, i::Int) = @inbounds (ts.coeffs[i] = v)
-Base.show(io::IO, ts::Tensor{T,D,M}) where {T,D,M} = print(io, "Tensor{T=$T, D=$D, M=$M}")
+
+Base.show(io::IO, ts::Tensor{T,D,M}) where {T,D,M} =
+    print(io, "Tensor{T=$T, D=$D, M=$M}(length=$(length(ts.coeffs)))")
 
 # -------------------------------------------------------------------
 # Constructors
@@ -33,7 +36,7 @@ end
 
 function Tensor{T,D,M}(coeffs::Vector{T}) where {T,D,M}
     offsets = level_starts0(D, M)
-    @assert length(coeffs) == offsets[end]
+    @assert length(coeffs) == offsets[end] "Coefficient length mismatch"
     return Tensor{T,D,M}(coeffs, offsets)
 end
 
@@ -42,11 +45,17 @@ function Tensor(coeffs::Vector{T}, d::Int, m::Int) where {T}
 end
 
 @generated function _make_tensor(coeffs::Vector{T}, ::Val{D}, ::Val{M}) where {T,D,M}
-    quote; return Tensor{T,D,M}(coeffs); end
+    quote
+        return Tensor{T,D,M}(coeffs)
+    end
 end
 
 Base.similar(ts::Tensor{T,D,M}) where {T,D,M} = Tensor{T,D,M}()
-Base.copy(ts::Tensor{T,D,M}) where {T,D,M} = Tensor{T,D,M}(copy(ts.coeffs), ts.offsets)
+Base.similar(ts::Tensor{T,D,M}, ::Type{S}) where {T,D,M,S} = Tensor{S,D,M}()
+
+Base.copy(ts::Tensor{T,D,M}) where {T,D,M} = 
+    Tensor{T,D,M}(copy(ts.coeffs), ts.offsets)
+
 function Base.copy!(dest::Tensor{T,D,M}, src::Tensor{T,D,M}) where {T,D,M}
     copyto!(dest.coeffs, src.coeffs)
     return dest
@@ -58,29 +67,39 @@ end
 
 function level_starts0(d::Int, m::Int)
     offsets = Vector{Int}(undef, m + 2)
-    offsets[1] = 0; len = 1
+    offsets[1] = 0
+    len = 1
     @inbounds for k in 1:m+1
         offsets[k+1] = offsets[k] + len
         len *= d
     end
-    W = 8; pad = (W - (offsets[2] % W)) % W
+    W = 8 
+    pad = (W - (offsets[2] % W)) % W
     if pad != 0
-        @inbounds for k in 2:length(offsets); offsets[k] += pad; end
+        @inbounds for k in 2:length(offsets)
+            offsets[k] += pad
+        end
     end
     return offsets
 end
 
-@inline _write_unit!(t::Tensor{T}) where {T} = (t.coeffs[t.offsets[1] + 1] = one(T); t)
+@inline function _zero!(ts::Tensor{T}) where {T}
+    fill!(ts.coeffs, zero(T)); ts
+end
+
+@inline _write_unit!(t::Tensor{T}) where {T} =
+    (t.coeffs[t.offsets[1] + 1] = one(T); t)
 
 # -------------------------------------------------------------------
-# Ping-Pong Horner Kernel
+# Optimized Horner Kernel (Block SVector IO)
 # -------------------------------------------------------------------
 
 """
     update_signature_horner!(A, z, B1, B2)
 
-Updates signature A using increment z.
-Uses two scratch buffers B1/B2 to allow strictly forward memory access.
+Updates signature A using increment z via Horner's method.
+Optimization: Uses `unsafe_store!` with `Ptr{SVector{D,T}}` to write 
+contiguous blocks of dimension D in a single instruction, bypassing loops.
 """
 @generated function update_signature_horner!(
     A_tensor::Tensor{T,D,M}, 
@@ -98,33 +117,27 @@ Uses two scratch buffers B1/B2 to allow strictly forward memory access.
         ops = Expr[]
         
         # 1. Initialize B1 (scratch) for this level
-        # B1 = z / k
         push!(ops, quote
             inv_k = inv(T($k))
-            val_D = $D
-            @turbo for d in 1:val_D
-                B1[d] = z[d] * inv_k
-            end
+            
+            # SVector broadcast/scale
+            val_init = z * inv_k
+            
+            # Unsafe store SVector to B1[1]
+            # Treats B1 as Ptr{SVector{D,T}} and writes 1 element (block of D floats)
+            unsafe_store!(Ptr{SVector{$D, T}}(pointer(B1)), val_init, 1)
         end)
         
-        current_len = D
+        current_len = D 
+        # Note: current_len tracks the number of SCALARS in the SOURCE buffer
+        # In step 1, we wrote D scalars (1 block). Source for step 2 is size D.
         
-        # 2. Accumulate intermediate terms (A_i) and expand
-        # Loop i from 1 to k-2
-        # We ping-pong between B1 and B2
-        
-        # Track which buffer is 'source' and 'dest' via a compile-time boolean
-        # source_is_B1 = true
-        
-        # Unroll the accumulation loop
+        # 2. Accumulate and Expand
+        # We iterate through the source scalars. Each scalar generates one SVector block in dest.
         for i in 1:(k-2)
             
             next_scale = inv(T(k - i))
             a_start = off[i+1]
-            
-            # This iteration: Expand Source -> Dest
-            # If i is odd:  Src=B1, Dst=B2
-            # If i is even: Src=B2, Dst=B1
             
             src_buf = isodd(i) ? :B1 : :B2
             dst_buf = isodd(i) ? :B2 : :B1
@@ -132,22 +145,28 @@ Uses two scratch buffers B1/B2 to allow strictly forward memory access.
             push!(ops, quote
                 len = $current_len
                 scale = $next_scale
-                val_D = $D
                 
-                # We iterate linearly forward! 
-                # src[r] contains the accumulated value for index r
-                # We expand it into Dst[ (r-1)*D + 1 ... ]
+                # Raw pointers
+                ptr_src = pointer($src_buf)
+                ptr_dst = pointer($dst_buf)
+                ptr_coeffs = pointer(coeffs)
+                ptr_dst_sv = Ptr{SVector{$D, T}}(ptr_dst)
                 
+                z_vec = z
+                
+                # Iterate linearly forward over source scalars
                 for r in 1:len
-                    # 1. Read accumulator + A_i
-                    val = $src_buf[r] + coeffs[$a_start + r]
+                    # 1. Read: Scalar accumulator + A_i scalar
+                    src_val = unsafe_load(ptr_src, r)
+                    coeff_val = unsafe_load(ptr_coeffs, $a_start + r)
+                    val = src_val + coeff_val
                     
-                    # 2. Write expanded block
-                    base_idx = (r-1)*val_D
+                    # 2. Compute: Rank-1 expansion (Scalar * Vector)
+                    res_vec = (val * scale) * z_vec
                     
-                    @turbo for c in 1:val_D
-                        $dst_buf[base_idx + c] = val * z[c] * scale
-                    end
+                    # 3. Write: Store SVector block to destination
+                    # Writing to block index r (1-based)
+                    unsafe_store!(ptr_dst_sv, res_vec, r)
                 end
             end)
             
@@ -155,12 +174,7 @@ Uses two scratch buffers B1/B2 to allow strictly forward memory access.
         end
         
         # 3. Final Step for Level k
-        # Read from the current 'Source' buffer, Add A_{k-1}, Multiply z, Write to A_k
-        
-        # Determining final source buffer
-        # If (k-2) was the last step:
-        # If (k-2) was odd, result is in B2.
-        # If (k-2) was even (or 0 loops), result is in B1.
+        # Read final source buffer, add A_{k-1}, expand into A_k (accumulate)
         
         last_iter_count = k - 2
         final_src_buf = (last_iter_count > 0 && isodd(last_iter_count)) ? :B2 : :B1
@@ -171,18 +185,29 @@ Uses two scratch buffers B1/B2 to allow strictly forward memory access.
         
         push!(ops, quote
             len = $current_len
-            val_D = $D
+            
+            ptr_src = pointer($final_src_buf)
+            ptr_coeffs = pointer(coeffs)
+            
+            z_vec = z
+            
+            # Pointer to A_k start.
+            # NOTE: We assume alignment is sufficient or architecture supports unaligned stores (standard on x64/arm64)
+            ptr_Ak_base = pointer(coeffs, $a_tgt_start + 1)
+            ptr_Ak_sv = Ptr{SVector{$D, T}}(ptr_Ak_base)
             
             for r in 1:len
-                # val = B_final[r] + A_{k-1}[r]
-                val = $final_src_buf[r] + coeffs[$a_prev_start + r]
+                # Scalar Load
+                src_val = unsafe_load(ptr_src, r)
+                coeff_val = unsafe_load(ptr_coeffs, $a_prev_start + r)
+                val = src_val + coeff_val
                 
-                # Expand directly into A_k
-                base_idx = $a_tgt_start + (r-1)*val_D
+                # Vector Calc
+                inc_vec = val * z_vec
                 
-                @turbo for c in 1:val_D
-                    coeffs[base_idx + c] += val * z[c]
-                end
+                # RMW (Read-Modify-Write) on A_k
+                # Load existing block, add increment, store back
+                unsafe_store!(ptr_Ak_sv, unsafe_load(ptr_Ak_sv, r) + inc_vec, r)
             end
         end)
         
@@ -192,15 +217,16 @@ Uses two scratch buffers B1/B2 to allow strictly forward memory access.
     # Handle Level 1
     push!(updates, quote
         start_1 = $(off[2])
-        val_D = $D
-        @turbo for d in 1:val_D
-            coeffs[start_1 + d] += z[d]
-        end
+        # A_1 is at start_1 + 1
+        ptr_A1 = pointer(coeffs, start_1 + 1)
+        ptr_A1_sv = Ptr{SVector{$D, T}}(ptr_A1)
+        
+        # A_1 += z
+        unsafe_store!(ptr_A1_sv, unsafe_load(ptr_A1_sv, 1) + z, 1)
     end)
 
     return quote
         coeffs = A_tensor.coeffs
-        
         @inbounds begin
             $(Expr(:block, updates...))
         end
