@@ -1,5 +1,5 @@
 path_kind: "linear"
-Ns: [400]
+Ns: [4000]
 Ds: [5]
 Ms: [5]
 operations: ["signature"]
