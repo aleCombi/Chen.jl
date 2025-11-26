@@ -1,7 +1,7 @@
 name = "Chen"
 uuid = "4efb4129-5e83-47d2-926d-947c0e6cb76d"
 version = "0.1.0"
-authors = ["aleCombi <alecombi94@gmail.com>"]
+authors = ["Alessandro Combi <alecombi94@gmail.com>"]
 
 [deps]
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
