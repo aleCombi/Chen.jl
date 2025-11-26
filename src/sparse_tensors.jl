@@ -66,7 +66,7 @@ SparseTensor{T}(dim::Int, level::Int) where T = SparseTensor{T}(Dict{Word, T}(),
 end
 
 # -------- Sparse ↔ Sparse --------
-# FIXED: Removed `Chen.` prefix
+# FIXED: Removed `ChenSignatures.` prefix
 function Base.isapprox(A::SparseTensor{Ta}, B::SparseTensor{Tb};
                        atol::Real=1e-8, rtol::Real=1e-8) where {Ta,Tb}
     A.dim == B.dim && A.level == B.level || return false
@@ -90,7 +90,7 @@ Base.similar(ts::SparseTensor{T}) where {T} = SparseTensor{T}(ts.dim, ts.level)
 Base.zero(::Type{SparseTensor{T}}, dim::Int, level::Int) where T = SparseTensor{T}(dim, level)
 Base.zero(t::SparseTensor{T}) where T = zero(SparseTensor{T}, t.dim, t.level)
 
-# FIXED: Removed `Chen.` prefix
+# FIXED: Removed `ChenSignatures.` prefix
 @inline _write_unit!(t::SparseTensor{T}) where {T} = (t.coeffs[Word()] = one(T); t)
 
 # Coefficient access

@@ -1,4 +1,4 @@
-# AbstractTensor is defined in Chen.jl
+# AbstractTensor is defined in ChenSignatures.jl
 
 # --- Generic Exponential ---
 

@@ -1,5 +1,5 @@
 using Test
-using Chen
+using ChenSignatures
 using StaticArrays
 
 # Helper to create Matrix from logic

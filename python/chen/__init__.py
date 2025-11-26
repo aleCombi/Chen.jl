@@ -5,7 +5,7 @@ from juliacall import Main as jl
 def _find_local_project():
     """
     Detects if we are running from a local development environment
-    (i.e. the Chen.jl repository exists two levels up).
+    (i.e. the ChenSignatures.jl repository exists two levels up).
     """
     this_file = Path(__file__).resolve()
     # python/chen/__init__.py -> parents[2] is the repo root
@@ -19,7 +19,7 @@ def _ensure_chen_loaded():
     """
     Ensures the Julia backend is installed and loaded.
     - If local dev: use Pkg.develop on the repository root.
-    - If installed normally: add Chen.jl from GitHub branch `python_package`
+    - If installed normally: add ChenSignatures.jl from GitHub branch `python_package`
       only if it's not already in the active Julia project.
     """
     local = _find_local_project()
@@ -30,24 +30,24 @@ def _ensure_chen_loaded():
         jl.seval(f"""
             import Pkg
             # Only develop once per Julia environment
-            if !haskey(Pkg.project().dependencies, "Chen")
+            if !haskey(Pkg.project().dependencies, "ChenSignatures")
                 Pkg.develop(path = "{proj}")
             end
         """)
     else:
-        # PyPI-installed mode: install Chen.jl from GitHub only if missing
+        # PyPI-installed mode: install ChenSignatures.jl from GitHub only if missing
         jl.seval("""
             import Pkg
-            if !haskey(Pkg.project().dependencies, "Chen")
+            if !haskey(Pkg.project().dependencies, "ChenSignatures")
                 Pkg.add(Pkg.PackageSpec(
-                    url = "https://github.com/aleCombi/Chen.jl",
+                    url = "https://github.com/aleCombi/ChenSignatures.jl",
                     rev = "master",
                 ))
             end
         """)
 
     # Now load Chen
-    jl.seval("using Chen")
+    jl.seval("using ChenSignatures")
 
 # Initialize Julia environment on import
 _ensure_chen_loaded()
@@ -66,7 +66,7 @@ def sig(path, m: int) -> np.ndarray:
     # Ensure memory is contiguous for optimal transfer to Julia
     arr = np.ascontiguousarray(path)
     # Call Julia function
-    res = jl.Chen.sig(arr, m)
+    res = jl.ChenSignatures.sig(arr, m)
     # Convert Julia Vector back to NumPy array
     return np.asarray(res)
 
@@ -85,7 +85,7 @@ def logsig(path, m: int) -> np.ndarray:
     d = arr.shape[1]
     
     # We hold the BasisCache object in Python as a managed Julia object
-    basis = jl.Chen.prepare(d, m)
+    basis = jl.ChenSignatures.prepare(d, m)
     
-    res = jl.Chen.logsig(arr, basis)
+    res = jl.ChenSignatures.logsig(arr, basis)
     return np.asarray(res)

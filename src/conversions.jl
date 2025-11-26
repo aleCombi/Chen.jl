@@ -31,7 +31,7 @@ function Algebra.SparseTensor(t::Tensor{T,D,M}) where {T,D,M}
 end
 
 # --- Sparse → Dense ---
-# We extend the Chen.Tensor function
+# We extend the ChenSignatures.Tensor function
 function Tensor(t::SparseTensor{T}) where {T}
     return _sparse_to_dense(t, Val(t.dim), Val(t.level))
 end

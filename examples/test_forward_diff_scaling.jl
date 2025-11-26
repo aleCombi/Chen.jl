@@ -1,4 +1,4 @@
-using Chen, ForwardDiff, StaticArrays, BenchmarkTools
+using ChenSignatures, ForwardDiff, StaticArrays, BenchmarkTools
 
 println("Testing ForwardDiff scaling with path length...")
 println()
@@ -13,7 +13,7 @@ function test_scaling()
             # Generate N-point path from 2 control points
             t = range(0, 1, length=N)
             path = [SA[params[1] * tt, params[2] * (1-tt)] for tt in t]
-            sig = signature_path(Chen.Tensor{eltype(params)}, path, 3)
+            sig = signature_path(ChenSignatures.Tensor{eltype(params)}, path, 3)
             return sum(sig.coeffs)
         end
     end

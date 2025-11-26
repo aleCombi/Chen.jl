@@ -1,7 +1,7 @@
 # benchmark/sigcheck.jl
 
 using StaticArrays
-using Chen
+using ChenSignatures
 using LinearAlgebra
 
 if length(ARGS) < 5
@@ -38,7 +38,7 @@ end
 # -------- main logic --------
 
 path = make_path(d, N, path_kind)
-tensor_type = Chen.Tensor{eltype(path[1])}
+tensor_type = ChenSignatures.Tensor{eltype(path[1])}
 
 # 1. Compute Signature
 sig = signature_path(tensor_type, path, m)
@@ -55,14 +55,14 @@ if operation === :signature
 
 elseif operation === :logsignature
     # 2. Compute Log Signature
-    log_sig_tensor = Chen.log(sig)
+    log_sig_tensor = ChenSignatures.log(sig)
     
     # 3. Project to Lyndon basis
     # FIXED: Accessing Algebra submodule
-    lynds, L, _ = Chen.Algebra.build_L(d, m)
+    lynds, L, _ = ChenSignatures.Algebra.build_L(d, m)
     
     # FIXED: Accessing Algebra submodule
-    output_vec = Chen.Algebra.project_to_lyndon(log_sig_tensor, lynds, L)
+    output_vec = ChenSignatures.Algebra.project_to_lyndon(log_sig_tensor, lynds, L)
 
 else
     error("Unknown operation: $operation")

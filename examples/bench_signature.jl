@@ -1,4 +1,4 @@
-using Chen
+using ChenSignatures
 using StaticArrays
 using BenchmarkTools
 
@@ -6,7 +6,7 @@ using BenchmarkTools
 function signature_path_old!(
     out::AT,
     path::Vector{SVector{D,T}},
-) where {D,T, AT <: Chen.AbstractTensor{T}}
+) where {D,T, AT <: ChenSignatures.AbstractTensor{T}}
 
     d = D
     a = similar(out)
@@ -15,12 +15,12 @@ function signature_path_old!(
     displacement = Vector{T}(undef, d)
 
     displacement .= path[2] - path[1]
-    Chen.exp!(a, displacement)
+    ChenSignatures.exp!(a, displacement)
 
     for i in 2:length(path)-1
         displacement .= path[i+1] - path[i]
-        Chen.exp!(segment_tensor, displacement)
-        Chen.mul!(b, a, segment_tensor)
+        ChenSignatures.exp!(segment_tensor, displacement)
+        ChenSignatures.mul!(b, a, segment_tensor)
         a, b = b, a
     end
 
@@ -31,7 +31,7 @@ end
 function signature_path_new!(
     out::AT,
     path::Vector{SVector{D,T}},
-) where {D,T, AT <: Chen.AbstractTensor{T}}
+) where {D,T, AT <: ChenSignatures.AbstractTensor{T}}
 
     @assert length(path) ≥ 2 "path must have at least 2 points"
 
@@ -41,12 +41,12 @@ function signature_path_new!(
 
     @inbounds begin
         Δ = path[2] - path[1]
-        Chen.exp!(a, Δ)
+        ChenSignatures.exp!(a, Δ)
 
         for i in 2:length(path)-1
             Δ = path[i+1] - path[i]
-            Chen.exp!(segment_tensor, Δ)
-            Chen.mul!(b, a, segment_tensor)
+            ChenSignatures.exp!(segment_tensor, Δ)
+            ChenSignatures.mul!(b, a, segment_tensor)
             a, b = b, a
         end
     end
@@ -79,11 +79,11 @@ function bench_signature()
 
     path = build_path(Val(D), n)
 
-    out_old = Chen.Tensor{Float64}(D, m)
-    out_new = Chen.Tensor{Float64}(D, m)
+    out_old = ChenSignatures.Tensor{Float64}(D, m)
+    out_new = ChenSignatures.Tensor{Float64}(D, m)
 
     println("Benchmarking allocating API (baseline):")
-    @btime Chen.signature_path(Chen.Tensor{Float64}, $path, $m);
+    @btime ChenSignatures.signature_path(ChenSignatures.Tensor{Float64}, $path, $m);
 
     println("\nBenchmarking old in-place version (returns new Tensor, `out` unused):")
     @btime signature_path_old!($out_old, $path);

@@ -6,7 +6,7 @@ using StaticArrays
 using BenchmarkTools
 using Random
 using LoopVectorization: @avx
-using Chen
+using ChenSignatures
 
 # ------------------------------------------------------------------
 # Parameters / backend type
@@ -16,8 +16,8 @@ const D = 5             # path dimension
 const M = 5             # signature level
 const T = Float64
 
-# Concrete Chen backend with fixed D,M
-const AT = Chen.Tensor{T, D, M}
+# Concrete ChenSignatures backend with fixed D,M
+const AT = ChenSignatures.Tensor{T, D, M}
 
 println("Benchmarking Type: $AT")
 
@@ -52,7 +52,7 @@ function update_signature_linear!(
     copy!(scratch, sig)
 
     # 2) E := exp(Δ)
-    Chen.exp!(seg, Δ)
+    ChenSignatures.exp!(seg, Δ)
 
     S = scratch.coeffs
     E = seg.coeffs
@@ -117,7 +117,7 @@ end
 Compute the signature of a piecewise-linear path `path` into `out`,
 using the fused linear update `update_signature_linear!`.
 
-Backend is `Chen.Tensor{T,D,M}` with fixed `D,M`.
+Backend is `ChenSignatures.Tensor{T,D,M}` with fixed `D,M`.
 """
 function signature_path_linear!(
     out::AT,
@@ -134,7 +134,7 @@ function signature_path_linear!(
     @inbounds begin
         # First segment: signature of the first segment alone is exp(Δ₁)
         Δ = path[2] - path[1]
-        Chen.exp!(sig, Δ)
+        ChenSignatures.exp!(sig, Δ)
 
         # Remaining segments: use fused linear update
         for i in 2:length(path)-1
@@ -147,7 +147,7 @@ function signature_path_linear!(
 end
 
 # ------------------------------------------------------------------
-# Benchmarks: Chen.signature_path! vs fused signature_path_linear!
+# Benchmarks: ChenSignatures.signature_path! vs fused signature_path_linear!
 # ------------------------------------------------------------------
 
 function run_benchmarks(; Nseg::Int = 1000)
@@ -158,30 +158,30 @@ function run_benchmarks(; Nseg::Int = 1000)
     path = [@SVector rand(rng, T, D) for _ in 1:N]
 
     # Output buffers (use generic ctor to get the right concrete type)
-    out_chen  = Chen.Tensor{T}(D, M)  # should be Tensor{T,D,M}
-    out_fused = Chen.Tensor{T}(D, M)
+    out_chen  = ChenSignatures.Tensor{T}(D, M)  # should be Tensor{T,D,M}
+    out_fused = ChenSignatures.Tensor{T}(D, M)
 
     println("Nseg = $Nseg")
 
     # Warmup + correctness check
-    Chen.signature_path!(out_chen, path)
+    ChenSignatures.signature_path!(out_chen, path)
     signature_path_linear!(out_fused, path)
 
     @assert isapprox(out_chen, out_fused; atol=1e-8, rtol=1e-8) \
-        "Fused implementation disagrees with Chen.signature_path!"
+        "Fused implementation disagrees with ChenSignatures.signature_path!"
 
-    println("\n=== Chen.signature_path! ===")
-    @btime Chen.signature_path!($out_chen, $path)
+    println("\n=== ChenSignatures.signature_path! ===")
+    @btime ChenSignatures.signature_path!($out_chen, $path)
 
     println("\n=== signature_path_linear! (fused update) ===")
     @btime signature_path_linear!($out_fused, $path)
 
     # Also report per-segment times using @belapsed
-    t_chen  = @belapsed Chen.signature_path!($out_chen, $path)
+    t_chen  = @belapsed ChenSignatures.signature_path!($out_chen, $path)
     t_fused = @belapsed signature_path_linear!($out_fused, $path)
 
     println("\n--- Summary (Nseg = $Nseg) ---")
-    println("Chen.signature_path!:     $(t_chen * 1e3) ms total  ($(t_chen / Nseg * 1e6) μs/segment)")
+    println("ChenSignatures.signature_path!:     $(t_chen * 1e3) ms total  ($(t_chen / Nseg * 1e6) μs/segment)")
     println("signature_path_linear!:   $(t_fused * 1e3) ms total  ($(t_fused / Nseg * 1e6) μs/segment)")
 
     return nothing

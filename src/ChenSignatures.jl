@@ -1,4 +1,4 @@
-module Chen
+module ChenSignatures
 
 using StaticArrays
 using LinearAlgebra

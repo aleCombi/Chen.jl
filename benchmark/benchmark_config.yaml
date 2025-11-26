@@ -1,8 +1,21 @@
+# benchmark_config.yaml
+
 path_kind: "sin"
-Ns: [5, 10, 1000]
-Ds: [2, 5, 7]
-Ms: [3, 5, 7]
+
+# N scaling (row 1)
+Ns: [2, 3, 4]
+
+# d scaling (row 2)
+Ds: [2, 4, 8, 10]
+
+# m scaling (row 3)
+Ms: [2, 3, 4, 5, 6, 7, 8]
+
 operations: ["logsignature", "signature"]
+
 runs_dir: "runs"
-repeats: 20
+
+# 10 is enough for smoothing; 20 can get very slow with big configs
+repeats: 10
+
 logsig_method: "S"

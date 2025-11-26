@@ -1,4 +1,4 @@
-using Chen
+using ChenSignatures
 using BenchmarkTools
 using StaticArrays
 using LinearAlgebra
@@ -8,11 +8,11 @@ using LoopVectorization
 # 1. BASELINE
 # ==============================================================================
 function run_baseline!(a, b, seg, path)
-    Chen._zero!(a); Chen._write_unit!(a)
+    ChenSignatures._zero!(a); ChenSignatures._write_unit!(a)
     @inbounds for i in 1:length(path)-1
         Δ = path[i+1] - path[i]
-        Chen.exp!(seg, Δ)
-        Chen.mul!(b, a, seg)
+        ChenSignatures.exp!(seg, Δ)
+        ChenSignatures.mul!(b, a, seg)
         a, b = b, a
     end
     return a
@@ -22,7 +22,7 @@ end
 # 2. OPTIMIZED (Specialized Kernels for D=3)
 # ==============================================================================
 module Specialized
-    using Chen
+    using ChenSignatures
     using LoopVectorization
     using StaticArrays
 
@@ -32,7 +32,7 @@ module Specialized
     # 0, 1, 4, 13, 40, 121, 364
     const OFF = (0, 1, 4, 13, 40, 121, 364)
 
-    @inline function exp_d3!(out::Chen.Tensor{T}, Δ::SVector{3,T}) where T
+    @inline function exp_d3!(out::ChenSignatures.Tensor{T}, Δ::SVector{3,T}) where T
         # Unrolled exp! for D=3
         c = out.coeffs
         
@@ -68,7 +68,7 @@ module Specialized
         end
     end
 
-    @inline function mul_d3!(dest::Chen.Tensor{T}, A::Chen.Tensor{T}, B::Chen.Tensor{T}) where T
+    @inline function mul_d3!(dest::ChenSignatures.Tensor{T}, A::ChenSignatures.Tensor{T}, B::ChenSignatures.Tensor{T}) where T
         # Specialized Convolution for D=3
         # dest = A ⊗ B
         C = dest.coeffs; Ac = A.coeffs; Bc = B.coeffs
@@ -125,7 +125,7 @@ module Specialized
     end
 
     function run_specialized!(a, b, seg, path)
-        Chen._zero!(a); Chen._write_unit!(a)
+        ChenSignatures._zero!(a); ChenSignatures._write_unit!(a)
         
         @inbounds for i in 1:length(path)-1
             Δ = path[i+1] - path[i]
@@ -150,16 +150,16 @@ println("--- BENCHMARK CONFIGURATION ---")
 println("Path: $N x $d, Level: $m")
 
 path_sv = [SVector{d, Float64}(randn(d)) for _ in 1:N]
-t_1 = Chen.Tensor{Float64}(d, m)
-t_2 = Chen.Tensor{Float64}(d, m)
-t_3 = Chen.Tensor{Float64}(d, m)
+t_1 = ChenSignatures.Tensor{Float64}(d, m)
+t_2 = ChenSignatures.Tensor{Float64}(d, m)
+t_3 = ChenSignatures.Tensor{Float64}(d, m)
 
 println("\n1. Correctness")
 r1 = run_baseline!(t_1, t_2, t_3, path_sv)
 # Reset tensors
-t_1c = Chen.Tensor{Float64}(d, m)
-t_2c = Chen.Tensor{Float64}(d, m)
-t_3c = Chen.Tensor{Float64}(d, m)
+t_1c = ChenSignatures.Tensor{Float64}(d, m)
+t_2c = ChenSignatures.Tensor{Float64}(d, m)
+t_3c = ChenSignatures.Tensor{Float64}(d, m)
 r2 = Specialized.run_specialized!(t_1c, t_2c, t_3c, path_sv)
 
 println("Diff: $(norm(r1.coeffs - r2.coeffs))")

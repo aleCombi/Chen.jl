@@ -2,7 +2,7 @@ using Revise
 using StaticArrays
 using BenchmarkTools
 using Random
-using Chen
+using ChenSignatures
 
 # ------------------------------------------------------------------
 # Parameters
@@ -12,9 +12,9 @@ const M    = 5      # signature level  (Static type parameter)
 const Nseg = 1000   # number of segments in the path
 const N    = Nseg + 1
 
-# Concrete Chen backend with fixed Dimension D and Level M
+# Concrete CheSignatures backend with fixed Dimension D and Level M
 # This is the key change: D is now part of the type signature.
-const AT = Chen.Tensor{Float64, D, M}
+const AT = ChenSignatures.Tensor{Float64, D, M}
 
 println("Benchmarking Type: $AT")
 
@@ -39,7 +39,7 @@ seg = similar(out)
 # ------------------------------------------------------------------
 println("=== exp! microbenchmark ===")
 # This now uses the @generated function specialized on SVector{D} and Tensor{...,D,...}
-@btime Chen.exp!($out, $Δ0)
+@btime ChenSignatures.exp!($out, $Δ0)
 
 # ------------------------------------------------------------------
 # mul! (generic) – arbitrary tensors, not necessarily group-like
@@ -51,7 +51,7 @@ rand!(x2_generic.coeffs)
 
 println("\n=== mul! (generic) microbenchmark ===")
 # Uses the statically sized loops (D known at compile time)
-@btime Chen.mul!($out, $x1_generic, $x2_generic)
+@btime ChenSignatures.mul!($out, $x1_generic, $x2_generic)
 
 # ------------------------------------------------------------------
 # mul_grouplike! – inputs constructed via exp! (so level-0 == 1)
@@ -62,36 +62,36 @@ x2_gl = AT()
 Δ1 = @SVector rand(rng, Float64, D)
 Δ2 = @SVector rand(rng, Float64, D)
 
-Chen.exp!(x1_gl, Δ1)  # group-like
-Chen.exp!(x2_gl, Δ2)  # group-like
+ChenSignatures.exp!(x1_gl, Δ1)  # group-like
+ChenSignatures.exp!(x2_gl, Δ2)  # group-like
 
 println("\n=== mul_grouplike! microbenchmark (group-like inputs) ===")
 # Uses the fully unrolled @generated function based on type parameter D
-@btime Chen.mul_grouplike!($out, $x1_gl, $x2_gl)
+@btime ChenSignatures.mul_grouplike!($out, $x1_gl, $x2_gl)
 
 # ------------------------------------------------------------------
 # Per-segment update: exp! + mul!  (a is reinitialised as group-like)
 # ------------------------------------------------------------------
 println("\n=== per-segment update (exp! + mul!) ===")
 @btime begin
-    Chen.exp!($seg, $Δseg)          # seg is group-like
-    Chen.mul!($b, $a, $seg)
-end setup = (Chen.exp!($a, $Δ0))    # a is group-like before each sample
+    ChenSignatures.exp!($seg, $Δseg)          # seg is group-like
+    ChenSignatures.mul!($b, $a, $seg)
+end setup = (ChenSignatures.exp!($a, $Δ0))    # a is group-like before each sample
 
 # ------------------------------------------------------------------
 # Per-segment update: exp! + mul_grouplike!  (same setup, but specialized mul)
 # ------------------------------------------------------------------
 println("\n=== per-segment update (exp! + mul_grouplike!) ===")
 @btime begin
-    Chen.exp!($seg, $Δseg)                # seg is group-like
-    Chen.mul_grouplike!($b, $a, $seg)
-end setup = (Chen.exp!($a, $Δ0))          # a is group-like before each sample
+    ChenSignatures.exp!($seg, $Δseg)                # seg is group-like
+    ChenSignatures.mul_grouplike!($b, $a, $seg)
+end setup = (ChenSignatures.exp!($a, $Δ0))          # a is group-like before each sample
 
 # ------------------------------------------------------------------
 # Full signature_path! for comparison
 # ------------------------------------------------------------------
 println("\n=== full signature_path! (for comparison) ===")
 # Note: Ensure signature_path! allocates the specific Tensor{T,D,M}
-t_full = @belapsed Chen.signature_path!($out, $path)
+t_full = @belapsed ChenSignatures.signature_path!($out, $path)
 println("signature_path!: $(t_full * 1e3) ms total  (Nseg = $Nseg)")
 println("per segment ≈ $(t_full / Nseg * 1e6) μs/segment")
