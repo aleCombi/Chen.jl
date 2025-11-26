@@ -37,7 +37,7 @@ function signature_path!(
     @assert length(path) ≥ 2
 
     fill!(out.coeffs, zero(T))
-    Chen._write_unit!(out)
+    ChenSignatures._write_unit!(out)
 
     # Scratch buffers for Ping-Pong
     # Size: D^(M-1) floats

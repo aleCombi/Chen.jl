@@ -1,7 +1,7 @@
 using Test
-using Chen
+using ChenSignatures
 
-@testset "Chen Tests" begin
+@testset "ChenSignatures Tests" begin
     include("exp_log.jl")
     include("correctness.jl")
     include("test_float32.jl")

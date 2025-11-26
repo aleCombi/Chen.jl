@@ -33,7 +33,7 @@ function logsig(path::AbstractMatrix{T}, basis::BasisCache) where T
     sv_path = [SVector{d, T}(path[i,:]) for i in 1:N]
     
     sig_tensor = signature_path(Tensor{T}, sv_path, basis.m)
-    log_tensor = Chen.log(sig_tensor)
+    log_tensor = ChenSignatures.log(sig_tensor)
     
     return Algebra.project_to_lyndon(log_tensor, basis.lynds, basis.L)
 end

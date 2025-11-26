@@ -1,6 +1,6 @@
 using Test
 using StaticArrays
-using Chen
+using ChenSignatures
 
 include("fixtures.jl")
 

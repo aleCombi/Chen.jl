@@ -23,7 +23,7 @@ path = np.ascontiguousarray(np.random.randn(N, d))
 print(f"Benchmarking: N={N}, d={d}, m={m}")
 print("-" * 40)
 
-# --- 1. Chen ---
+# --- 1. ChenSignatures ---
 # Warmup
 _ = chen.sig(path, m)
 
