@@ -1,6 +1,5 @@
 # ---------------- public API ----------------
 
-# 1. Optimized Entry
 function signature_path(
     ::Type{Tensor{T,D,M}},
     path::Vector{SVector{D,T}},
@@ -12,7 +11,6 @@ function signature_path(
     return out
 end
 
-# 2. Lift Generic
 function signature_path(::Type{Tensor{T}}, path::Vector{SVector{D,T}}, m::Int) where {T,D}
     return _dispatch_sig(Tensor{T}, Val(D), Val(m), path)
 end
@@ -30,7 +28,7 @@ end
 
 """
     signature_path!(out, path)
-Computes path signature using Ping-Pong Horner's Method.
+Computes path signature using Block-Optimized Horner's Method.
 """
 function signature_path!(
     out::Tensor{T,D,M},
@@ -42,10 +40,9 @@ function signature_path!(
     Chen._write_unit!(out)
 
     # Scratch buffers for Ping-Pong
-    # Max size needed is D^(M-1)
+    # Size: D^(M-1) floats
     max_scratch_len = M > 1 ? D^(M-1) : 1
     
-    # We allocate two simple vectors.
     B1 = Vector{T}(undef, max_scratch_len)
     B2 = Vector{T}(undef, max_scratch_len)
 
