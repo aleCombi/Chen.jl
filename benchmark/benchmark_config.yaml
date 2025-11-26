@@ -1,6 +1,6 @@
 path_kind: "linear"
 Ns: [4000]
-Ds: [5]
+Ds: [10]
 Ms: [5]
 operations: ["signature"]
 runs_dir: "runs"
