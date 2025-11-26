@@ -2,7 +2,7 @@ using StaticArrays
 using LoopVectorization: @avx, @turbo
 
 # -------------------------------------------------------------------
-# Tensor type
+# 1. Tensor Type Definition
 # -------------------------------------------------------------------
 
 struct Tensor{T,D,M} <: AbstractTensor{T}
@@ -10,8 +10,13 @@ struct Tensor{T,D,M} <: AbstractTensor{T}
     offsets::Vector{Int}
 end
 
+# -------------------------------------------------------------------
+# 2. Basic Interface
+# -------------------------------------------------------------------
+
 dim(::Tensor{T,D,M}) where {T,D,M} = D
 level(::Tensor{T,D,M}) where {T,D,M} = M
+
 Base.parent(ts::Tensor) = ts.coeffs
 coeffs(ts::Tensor) = ts.coeffs
 offsets(ts::Tensor) = ts.offsets
@@ -25,12 +30,13 @@ Base.show(io::IO, ts::Tensor{T,D,M}) where {T,D,M} =
     print(io, "Tensor{T=$T, D=$D, M=$M}(length=$(length(ts.coeffs)))")
 
 # -------------------------------------------------------------------
-# Constructors
+# 3. Constructors (FIXED: Uses zeros instead of undef)
 # -------------------------------------------------------------------
 
 function Tensor{T,D,M}() where {T,D,M}
     offsets = level_starts0(D, M)
-    coeffs  = Vector{T}(undef, offsets[end])
+    # FIX: Initialize with zeros to ensure padding is clean
+    coeffs  = zeros(T, offsets[end]) 
     return Tensor{T,D,M}(coeffs, offsets)
 end
 
@@ -62,7 +68,7 @@ function Base.copy!(dest::Tensor{T,D,M}, src::Tensor{T,D,M}) where {T,D,M}
 end
 
 # -------------------------------------------------------------------
-# Helpers
+# 4. Helpers
 # -------------------------------------------------------------------
 
 function level_starts0(d::Int, m::Int)
@@ -73,6 +79,7 @@ function level_starts0(d::Int, m::Int)
         offsets[k+1] = offsets[k] + len
         len *= d
     end
+    # Padding logic for SIMD alignment
     W = 8 
     pad = (W - (offsets[2] % W)) % W
     if pad != 0
@@ -84,173 +91,24 @@ function level_starts0(d::Int, m::Int)
 end
 
 @inline function _zero!(ts::Tensor{T}) where {T}
-    fill!(ts.coeffs, zero(T)); ts
+    fill!(ts.coeffs, zero(T))
+    return ts
 end
 
-@inline _write_unit!(t::Tensor{T}) where {T} =
-    (t.coeffs[t.offsets[1] + 1] = one(T); t)
-
-# -------------------------------------------------------------------
-# Optimized Horner Kernel (Pointer-based Block IO)
-# -------------------------------------------------------------------
-
-"""
-    update_signature_horner!(A, z, B1, B2)
-
-Updates signature A using increment z via Horner's method.
-Uses explicit pointer arithmetic and SVector casting to force 
-block-level SIMD instructions, bypassing standard loop overhead.
-"""
-@generated function update_signature_horner!(
-    A_tensor::Tensor{T,D,M}, 
-    z::SVector{D,T}, 
-    B1::AbstractVector{T},
-    B2::AbstractVector{T}
-) where {T,D,M}
-    
-    off = level_starts0(D, M)
-    updates = Expr[]
-
-    # Iterate levels k from M down to 2
-    for k in M:-1:2
-        
-        ops = Expr[]
-        
-        # 1. Initialize scratch B1 = z / k
-        push!(ops, quote
-            inv_k = inv(T($k))
-            val_init = z * inv_k
-            # Write entire SVector block to B1[1]
-            unsafe_store!(Ptr{SVector{$D, T}}(pointer(B1)), val_init, 1)
-        end)
-        
-        current_len = D 
-        
-        # 2. Accumulate and Expand (Ping-Pong)
-        for i in 1:(k-2)
-            next_scale = inv(T(k - i))
-            a_start = off[i+1]
-            
-            src_buf = isodd(i) ? :B1 : :B2
-            dst_buf = isodd(i) ? :B2 : :B1
-            
-            push!(ops, quote
-                len = $current_len
-                scale = $next_scale
-                
-                ptr_src = pointer($src_buf)
-                ptr_dst = pointer($dst_buf)
-                ptr_coeffs = pointer(coeffs)
-                ptr_dst_sv = Ptr{SVector{$D, T}}(ptr_dst) # Cast dest to vector ptr
-                
-                z_vec = z
-                
-                # Iterate linearly forward over SCALARS in source
-                # "len" is number of scalars in source
-                for r in 1:len
-                    # Read Scalar accumulators
-                    src_val = unsafe_load(ptr_src, r)
-                    coeff_val = unsafe_load(ptr_coeffs, $a_start + r)
-                    val = src_val + coeff_val
-                    
-                    # Compute Vector block: (scalar * scale) * SVector
-                    res_vec = (val * scale) * z_vec
-                    
-                    # Write Vector block to dest
-                    unsafe_store!(ptr_dst_sv, res_vec, r)
-                end
-            end)
-            
-            current_len *= D
-        end
-        
-        # 3. Final Step for Level k: Update A directly
-        last_iter_count = k - 2
-        final_src_buf = (last_iter_count > 0 && isodd(last_iter_count)) ? :B2 : :B1
-        
-        prev_level_idx = k - 1
-        a_prev_start = off[prev_level_idx+1]
-        a_tgt_start  = off[k+1]
-        
-        push!(ops, quote
-            len = $current_len
-            
-            ptr_src = pointer($final_src_buf)
-            ptr_coeffs = pointer(coeffs)
-            
-            # Target is A_k, cast to SVector pointer
-            ptr_Ak_base = pointer(coeffs, $a_tgt_start + 1)
-            ptr_Ak_sv = Ptr{SVector{$D, T}}(ptr_Ak_base)
-            
-            z_vec = z
-            
-            for r in 1:len
-                # Scalar Load
-                src_val = unsafe_load(ptr_src, r)
-                coeff_val = unsafe_load(ptr_coeffs, $a_prev_start + r)
-                val = src_val + coeff_val
-                
-                # Vector Calc
-                inc_vec = val * z_vec
-                
-                # RMW: Load Vector, Add, Store Vector
-                unsafe_store!(ptr_Ak_sv, unsafe_load(ptr_Ak_sv, r) + inc_vec, r)
-            end
-        end)
-        
-        push!(updates, Expr(:block, ops...))
-    end
-    
-    # Handle Level 1
-    push!(updates, quote
-        start_1 = $(off[2])
-        ptr_A1 = pointer(coeffs, start_1 + 1)
-        ptr_A1_sv = Ptr{SVector{$D, T}}(ptr_A1)
-        
-        # A_1 += z (Vector load/add/store)
-        unsafe_store!(ptr_A1_sv, unsafe_load(ptr_A1_sv, 1) + z, 1)
-    end)
-
-    return quote
-        coeffs = A_tensor.coeffs
-        @inbounds begin
-            $(Expr(:block, updates...))
-        end
-        return nothing
-    end
+@inline function _write_unit!(t::Tensor{T}) where {T}
+    t.coeffs[t.offsets[1] + 1] = one(T)
+    return t
 end
 
 # -------------------------------------------------------------------
-# Fallback Functions (Not used in hot path)
+# 5. Arithmetic Operations
 # -------------------------------------------------------------------
 
-@generated function exp!(out::Tensor{T,D,M}, x::SVector{D,T}) where {T,D,M}
-    off = level_starts0(D, M)
-    level_loops = Expr[]
-    for k in 2:M
-        prev_len = D^(k-1)
-        prev_s = off[k] + 1; cur_s = off[k+1] + 1
-        push!(level_loops, quote
-            scale = inv(T($k))
-            val_D = $D
-            for i in 1:val_D
-                val = scale * x[i]
-                dest = $cur_s + (i - 1) * $prev_len
-                @turbo for j in 0:$(prev_len - 1)
-                    coeffs[dest + j] = val * coeffs[$prev_s + j]
-                end
-            end
-        end)
+@inline function add_scaled!(dest::Tensor{T,D,M}, src::Tensor{T,D,M}, α::T) where {T,D,M}
+    @inbounds @turbo for i in eachindex(dest.coeffs, src.coeffs)
+        dest.coeffs[i] = muladd(α, src.coeffs[i], dest.coeffs[i])
     end
-    quote
-        coeffs = out.coeffs
-        coeffs[$(off[1] + 1)] = one(T)
-        s1 = $(off[2] + 1)
-        val_D = $D
-        @inbounds for i in 1:val_D; coeffs[s1 + i - 1] = x[i]; end
-        @inbounds begin; $(Expr(:block, level_loops...)); end
-        return nothing
-    end
+    dest
 end
 
 @generated function mul!(
@@ -317,9 +175,106 @@ function log(g::Tensor{T,D,M}) where {T,D,M}
     return log!(out, g)
 end
 
-@inline function add_scaled!(dest::Tensor{T,D,M}, src::Tensor{T,D,M}, α::T) where {T,D,M}
-    @inbounds @turbo for i in eachindex(dest.coeffs, src.coeffs)
-        dest.coeffs[i] = muladd(α, src.coeffs[i], dest.coeffs[i])
+# -------------------------------------------------------------------
+# 6. Kernels
+# -------------------------------------------------------------------
+
+@generated function update_signature_horner!(
+    A_tensor::Tensor{T,D,M}, 
+    z::SVector{D,T}, 
+    B1::AbstractVector{T},
+    B2::AbstractVector{T}
+) where {T,D,M}
+    off = level_starts0(D, M)
+    updates = Expr[]
+    for k in M:-1:2
+        ops = Expr[]
+        push!(ops, quote
+            inv_k = inv(T($k))
+            val_init = z * inv_k
+            unsafe_store!(Ptr{SVector{$D, T}}(pointer(B1)), val_init, 1)
+        end)
+        current_len = D 
+        for i in 1:(k-2)
+            next_scale = inv(T(k - i))
+            a_start = off[i+1]
+            src_buf = isodd(i) ? :B1 : :B2
+            dst_buf = isodd(i) ? :B2 : :B1
+            push!(ops, quote
+                len = $current_len
+                scale = $next_scale
+                ptr_src = pointer($src_buf); ptr_dst = pointer($dst_buf); ptr_coeffs = pointer(coeffs)
+                ptr_dst_sv = Ptr{SVector{$D, T}}(ptr_dst)
+                z_vec = z
+                for r in 1:len
+                    src_val = unsafe_load(ptr_src, r)
+                    coeff_val = unsafe_load(ptr_coeffs, $a_start + r)
+                    val = src_val + coeff_val
+                    res_vec = (val * scale) * z_vec
+                    unsafe_store!(ptr_dst_sv, res_vec, r)
+                end
+            end)
+            current_len *= D
+        end
+        last_iter_count = k - 2
+        final_src_buf = (last_iter_count > 0 && isodd(last_iter_count)) ? :B2 : :B1
+        prev_level_idx = k - 1
+        a_prev_start = off[prev_level_idx+1]
+        a_tgt_start  = off[k+1]
+        push!(ops, quote
+            len = $current_len
+            ptr_src = pointer($final_src_buf); ptr_coeffs = pointer(coeffs)
+            ptr_Ak_base = pointer(coeffs, $a_tgt_start + 1)
+            ptr_Ak_sv = Ptr{SVector{$D, T}}(ptr_Ak_base)
+            z_vec = z
+            for r in 1:len
+                src_val = unsafe_load(ptr_src, r)
+                coeff_val = unsafe_load(ptr_coeffs, $a_prev_start + r)
+                val = src_val + coeff_val
+                inc_vec = val * z_vec
+                unsafe_store!(ptr_Ak_sv, unsafe_load(ptr_Ak_sv, r) + inc_vec, r)
+            end
+        end)
+        push!(updates, Expr(:block, ops...))
     end
-    dest
+    push!(updates, quote
+        start_1 = $(off[2])
+        ptr_A1 = pointer(coeffs, start_1 + 1)
+        ptr_A1_sv = Ptr{SVector{$D, T}}(ptr_A1)
+        unsafe_store!(ptr_A1_sv, unsafe_load(ptr_A1_sv, 1) + z, 1)
+    end)
+    return quote
+        coeffs = A_tensor.coeffs
+        @inbounds begin; $(Expr(:block, updates...)); end
+        return nothing
+    end
+end
+
+@generated function exp!(out::Tensor{T,D,M}, x::SVector{D,T}) where {T,D,M}
+    off = level_starts0(D, M)
+    level_loops = Expr[]
+    for k in 2:M
+        prev_len = D^(k-1)
+        prev_s = off[k] + 1; cur_s = off[k+1] + 1
+        push!(level_loops, quote
+            scale = inv(T($k))
+            val_D = $D
+            for i in 1:val_D
+                val = scale * x[i]
+                dest = $cur_s + (i - 1) * $prev_len
+                @turbo for j in 0:$(prev_len - 1)
+                    coeffs[dest + j] = val * coeffs[$prev_s + j]
+                end
+            end
+        end)
+    end
+    quote
+        coeffs = out.coeffs
+        coeffs[$(off[1] + 1)] = one(T)
+        s1 = $(off[2] + 1)
+        val_D = $D
+        @inbounds for i in 1:val_D; coeffs[s1 + i - 1] = x[i]; end
+        @inbounds begin; $(Expr(:block, level_loops...)); end
+        return nothing
+    end
 end
