@@ -18,31 +18,36 @@ def _find_local_project():
 def _ensure_chen_loaded():
     """
     Ensures the Julia backend is installed and loaded.
-    - If local dev: `Pkg.develop` the local path.
-    - If installed user: `Pkg.add` from GitHub (branch main).
+    - If local dev: use Pkg.develop on the repository root.
+    - If installed normally: add Chen.jl from GitHub branch `python_package`
+      only if it's not already in the active Julia project.
     """
     local = _find_local_project()
 
     if local is not None:
+        # Local development: use your local Julia project
         proj = local.as_posix()
-        # In dev mode, we want to use the local code immediately
-        jl.seval(f'import Pkg; Pkg.develop(path="{proj}")')
-    else:
-        # In production mode, we pull from GitHub.
-        # Added rev="main" to ensure users get the latest fixes (like Float32 support)
-        jl.seval(
-            """
+        jl.seval(f"""
             import Pkg
-            Pkg.add(Pkg.PackageSpec(
-                url="https://github.com/aleCombi/Chen.jl",
-                rev="python_package" 
-            ))
-            """
-        )
+            # Only develop once per Julia environment
+            if !haskey(Pkg.project().dependencies, "Chen")
+                Pkg.develop(path = "{proj}")
+            end
+        """)
+    else:
+        # PyPI-installed mode: install Chen.jl from GitHub only if missing
+        jl.seval("""
+            import Pkg
+            if !haskey(Pkg.project().dependencies, "Chen")
+                Pkg.add(Pkg.PackageSpec(
+                    url = "https://github.com/aleCombi/Chen.jl",
+                    rev = "python_package",
+                ))
+            end
+        """)
 
-    # Load the package into the Julia session
+    # Now load Chen
     jl.seval("using Chen")
-
 
 # Initialize Julia environment on import
 _ensure_chen_loaded()
