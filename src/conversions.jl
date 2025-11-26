@@ -1,6 +1,7 @@
 # --- Dense → Sparse ---
 # We extend the imported SparseTensor function
-function SparseTensor(t::Tensor{T,D,M}) where {T,D,M}
+# FIXED: Qualify with Algebra. to silence the extension warning
+function Algebra.SparseTensor(t::Tensor{T,D,M}) where {T,D,M}
     s = t.offsets
     coeffs = Dict{Word, T}()
     
