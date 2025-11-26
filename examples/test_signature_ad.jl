@@ -1,4 +1,4 @@
-using Chen, ForwardDiff, StaticArrays
+using ChenSignatures, ForwardDiff, StaticArrays
 
 function test_signature_ad()
     println("Testing signature_path with ForwardDiff...")
@@ -12,7 +12,7 @@ function test_signature_ad()
             SA[params[1], params[2]]  # Endpoint depends on params
         ]
         
-        sig = signature_path(Chen.Tensor{eltype(params)}, path, 3)
+        sig = signature_path(ChenSignatures.Tensor{eltype(params)}, path, 3)
         return sum(sig.coeffs)  # Scalar output for gradient
     end
     

@@ -184,7 +184,7 @@ def pysiglib_compute(path: np.ndarray, m: int, operation: str) -> np.ndarray:
         sig = np.asarray(pysiglib.signature(path_batch, degree=m), dtype=float).ravel()
         
         # FIX: pysiglib includes level 0 (scalar 1.0) at index 0.
-        # iisignature and Chen.jl do not. We slice it off.
+        # iisignature and ChenSignatures.jl do not. We slice it off.
         if sig.size > 0:
             return sig[1:]
         return sig

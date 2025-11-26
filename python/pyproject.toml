@@ -31,9 +31,9 @@ dependencies = [
 benchmark = ["pysiglib>=0.2.2", "iisignature>=0.24", "pytest"]
 
 [project.urls]
-Homepage = "https://github.com/aleCombi/Chen.jl"
-Repository = "https://github.com/aleCombi/Chen.jl"
-Issues = "https://github.com/aleCombi/Chen.jl/issues"
+Homepage = "https://github.com/aleCombi/ChenSignatures.jl"
+Repository = "https://github.com/aleCombi/ChenSignatures.jl"
+Issues = "https://github.com/aleCombi/ChenSignatures.jl/issues"
 
 [build-system]
 requires = ["setuptools>=45", "wheel"]

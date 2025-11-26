@@ -1,6 +1,6 @@
 module Algebra
 
-using ..Chen: AbstractTensor, Tensor 
+using ..ChenSignatures: AbstractTensor, Tensor 
 using LinearAlgebra
 
 include("sparse_tensors.jl")

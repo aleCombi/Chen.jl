@@ -130,7 +130,7 @@ If you use this in research, please cite:
   author = {Combi, Alessandro},
   title = {chen-signatures: Fast rough path signatures for Python},
   year = {2025},
-  url = {https://github.com/aleCombi/Chen.jl}
+  url = {https://github.com/aleCombi/ChenSignatures.jl}
 }
 ```
 
@@ -140,4 +140,4 @@ MIT License - see [LICENSE](../LICENSE) file.
 
 ## Contributing
 
-Issues and pull requests welcome at [github.com/aleCombi/Chen.jl](https://github.com/aleCombi/Chen.jl)
+Issues and pull requests welcome at [github.com/aleCombi/ChenSignatures.jl](https://github.com/aleCombi/ChenSignatures.jl)

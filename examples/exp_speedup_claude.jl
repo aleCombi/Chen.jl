@@ -1,4 +1,4 @@
-using Chen
+using ChenSignatures
 using BenchmarkTools
 using StaticArrays
 using LoopVectorization
@@ -9,8 +9,8 @@ const FACTORIAL_RECIP = Float64[
 ]
 
 function fused_update_optimized!(
-    out::Chen.Tensor{T},
-    accum::Chen.Tensor{T},
+    out::ChenSignatures.Tensor{T},
+    accum::ChenSignatures.Tensor{T},
     Δ::AbstractVector{T}
 ) where {T}
     
@@ -99,19 +99,19 @@ d, m = 5, 2
 ts = range(0.0, stop=1.0, length=100)
 path = [SVector{d,Float64}(ntuple(i -> (i == 1 ? t : 2t), d)) for t in ts]
 
-accum = Chen.Tensor{Float64}(d, m)
+accum = ChenSignatures.Tensor{Float64}(d, m)
 Δ1 = path[2] - path[1]
-Chen.exp!(accum, Δ1)
+ChenSignatures.exp!(accum, Δ1)
 
 Δ2 = path[3] - path[2]
 
 # Test correctness
-seg = Chen.Tensor{Float64}(d, m)
-out_old = Chen.Tensor{Float64}(d, m)
-out_new = Chen.Tensor{Float64}(d, m)
+seg = ChenSignatures.Tensor{Float64}(d, m)
+out_old = ChenSignatures.Tensor{Float64}(d, m)
+out_new = ChenSignatures.Tensor{Float64}(d, m)
 
-Chen.exp!(seg, Δ2)
-Chen.mul!(out_old, accum, seg)
+ChenSignatures.exp!(seg, Δ2)
+ChenSignatures.mul!(out_old, accum, seg)
 fused_update_optimized!(out_new, accum, Δ2)
 
 max_diff = maximum(abs.(out_old.coeffs .- out_new.coeffs))
@@ -125,8 +125,8 @@ if max_diff < 1e-10
     println("Benchmarking...")
     println("\n⏱️  Current (exp! + mul!):")
     t1 = @benchmark begin
-        Chen.exp!($seg, $Δ2)
-        Chen.mul!($out_old, $accum, $seg)
+        ChenSignatures.exp!($seg, $Δ2)
+        ChenSignatures.mul!($out_old, $accum, $seg)
     end samples=1000
     display(t1)
     

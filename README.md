@@ -2,11 +2,11 @@
 
 **Chen** is a high-performance Julia library for computing path signatures and log-signatures, foundational tools in Rough Path Theory and modern time-series analysis.
 
-[![Build Status](https://github.com/aleCombi/Chen.jl/actions/workflows/CI.yml/badge.svg?branch=master)](https://github.com/aleCombi/Chen.jl/actions/workflows/CI.yml?query=branch%3Amaster)
+[![Build Status](https://github.com/aleCombi/ChenSignatures.jl/actions/workflows/CI.yml/badge.svg?branch=master)](https://github.com/aleCombi/ChenSignatures.jl/actions/workflows/CI.yml?query=branch%3Amaster)
 
 ## 📐 Overview
 
-Chen provides efficient tools for calculating the signature of a path—a sequence of iterated integrals that captures the geometric and algebraic properties of sequential data. It is designed to be a faster, Julia-native alternative to the Python library `iisignature`.
+ChenSignatures provides efficient tools for calculating the signature of a path—a sequence of iterated integrals that captures the geometric and algebraic properties of sequential data. It is designed to be a faster, Julia-native alternative to the Python library `iisignature`.
 
 ## ✅ Key Features
 

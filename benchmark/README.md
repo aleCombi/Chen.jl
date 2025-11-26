@@ -1,6 +1,6 @@
-# Chen.jl Benchmarks
+# ChenSignatures.jl Benchmarks
 
-This directory contains the performance benchmarking suite for **Chen.jl**, comparing it against Python state-of-the-art libraries: **iisignature** and **pysiglib** (pysiglib).
+This directory contains the performance benchmarking suite for **ChenSignatures.jl**, comparing it against Python state-of-the-art libraries: **iisignature** and **pysiglib** (pysiglib).
 
 ## 📋 Prerequisites
 
@@ -59,7 +59,7 @@ logsig_method: "S"    # iisignature log-sig method: "O" or "S"
 
 ## ✅ Verification
 
-Speed is useless without correctness. Use `check_signatures.py` to numerically validate `Chen.jl` output against both `iisignature` and `pysiglib`.
+Speed is useless without correctness. Use `check_signatures.py` to numerically validate `ChenSignatures.jl` output against both `iisignature` and `pysiglib`.
 
 ```bash
 uv run check_signatures.py
@@ -67,7 +67,7 @@ uv run check_signatures.py
 
 This script:
 - Generates random paths based on the config
-- Computes signatures in Julia (Chen.jl)
+- Computes signatures in Julia (ChenSignatures.jl)
 - Computes signatures in Python using iisignature
 - Computes signatures in Python using pysiglib
 - Reports the L₂ difference and maximum absolute error for each comparison
@@ -107,7 +107,7 @@ N,d,m,path_kind,operation,python_library,t_ms_julia,t_ms_python,speed_ratio_pyth
 100,2,3,linear,signature,pysiglib,12.5,15.7,1.26,48.2,52.3
 ```
 
-The `speed_ratio_python_over_julia` shows how many times slower (>1.0) or faster (<1.0) the Python library is compared to Chen.jl.
+The `speed_ratio_python_over_julia` shows how many times slower (>1.0) or faster (<1.0) the Python library is compared to ChenSignatures.jl.
 
 ## 🔬 Library Comparison
 
@@ -115,7 +115,7 @@ The `speed_ratio_python_over_julia` shows how many times slower (>1.0) or faster
 |---------|----------|-------|
 | **iisignature** | Well-established, reference implementation | Unmaintained, Python ≤3.9 only |
 | **pysiglib** (pysiglib) | Modern, actively maintained | Newer implementation, supports Python 3.9+ |
-| **Chen.jl** | Highest performance, modern Julia | This library |
+| **ChenSignatures.jl** | Highest performance, modern Julia | This library |
 
 ## 💡 Tips
 
@@ -154,7 +154,7 @@ To add new benchmark scenarios:
 
 ## 🎯 Performance Goals
 
-Chen.jl aims to be:
+ChenSignatures.jl aims to be:
 - **Faster than iisignature** by 1.5-2x for typical use cases
 - **Competitive with pysiglib** (within 0.8-1.2x)
 - **Memory efficient** with lower allocation overhead

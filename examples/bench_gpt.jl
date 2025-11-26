@@ -1,9 +1,9 @@
 ######################## examples/bench_gpt.jl ########################
 #
-# One-shot comparison of Chen.signature_path!:
+# One-shot comparison of ChenSignatures.signature_path!:
 #
-#   1) Baseline (original Chen.exp!)
-#   2) After patching Chen.exp!(::Tensor, ::AbstractVector)
+#   1) Baseline (original ChenSignatures.exp!)
+#   2) After patching ChenSignatures.exp!(::Tensor, ::AbstractVector)
 #
 # Usage from REPL:
 #
@@ -11,12 +11,12 @@
 #
 #######################################################################
 
-using Chen
+using ChenSignatures
 using StaticArrays
 using LoopVectorization: @avx
 using BenchmarkTools
 
-const Tensor = Chen.Tensor
+const Tensor = ChenSignatures.Tensor
 
 # --------------------------------------------------------------------
 # 1. Benchmark helper
@@ -30,9 +30,9 @@ function _bench_signature(label; d::Int = 3, m::Int = 4, N::Int = 10_000)
     out  = Tensor{Float64}(d, m)
 
     # warmup
-    Chen.signature_path!(out, path)
+    ChenSignatures.signature_path!(out, path)
 
-    t = @belapsed Chen.signature_path!($out, $path)
+    t = @belapsed ChenSignatures.signature_path!($out, $path)
 
     println("  time: $(round(t*1e3; digits=3)) ms")
     println()
@@ -44,13 +44,13 @@ end
 # --------------------------------------------------------------------
 
 println("=====================================================")
-println(" Baseline Chen.signature_path! (original Chen.exp!)  ")
+println(" Baseline ChenSignatures.signature_path! (original ChenSignatures.exp!)  ")
 println("=====================================================\n")
 
 baseline_time = _bench_signature("Baseline:"; d=3, m=4, N=10_000)
 
 # --------------------------------------------------------------------
-# 3. Define fast kernel and patch Chen.exp!
+# 3. Define fast kernel and patch ChenSignatures.exp!
 # --------------------------------------------------------------------
 
 @inline function _segment_level_offsets_fast!(
@@ -69,12 +69,12 @@ baseline_time = _bench_signature("Baseline:"; d=3, m=4, N=10_000)
 end
 
 """
-    Chen.exp!(out::Chen.Tensor{T}, x::AbstractVector{T})
+    ChenSignatures.exp!(out::ChenSignatures.Tensor{T}, x::AbstractVector{T})
 
-Patched fast-path for tensor exponential on Chen.Tensor backend.
+Patched fast-path for tensor exponential on ChenSignatures.Tensor backend.
 This replaces the existing method once this file is included.
 """
-function Chen.exp!(out::Tensor{T}, x::AbstractVector{T}) where {T}
+function ChenSignatures.exp!(out::Tensor{T}, x::AbstractVector{T}) where {T}
     d = out.dim
     m = out.level
     offsets = out.offsets
@@ -121,7 +121,7 @@ end
 # --------------------------------------------------------------------
 
 println("=====================================================")
-println(" After patch: Chen.signature_path! (patched exp!)    ")
+println(" After patch: ChenSignatures.signature_path! (patched exp!)    ")
 println("=====================================================\n")
 
 patched_time = _bench_signature("Patched:"; d=3, m=4, N=10_000)
