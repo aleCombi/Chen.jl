@@ -41,7 +41,7 @@ def _ensure_chen_loaded():
             if !haskey(Pkg.project().dependencies, "Chen")
                 Pkg.add(Pkg.PackageSpec(
                     url = "https://github.com/aleCombi/Chen.jl",
-                    rev = "python_package",
+                    rev = "master",
                 ))
             end
         """)
