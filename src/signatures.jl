@@ -30,6 +30,9 @@ end
 
 """
     signature_path!(out, path)
+
+Computes path signature using Horner's Method (pySigLib Alg 2).
+Avoids explicit calculation of segment exponentials.
 """
 function signature_path!(
     out::Tensor{T,D,M},
@@ -38,46 +41,39 @@ function signature_path!(
     @assert length(path) ≥ 2
 
     # Initialize out to unit (1, 0, 0...)
-    # This is faster than generic _zero! + _write_unit!
     fill!(out.coeffs, zero(T))
     Chen._write_unit!(out)
 
-    # Scratch tensor for segment exponential
-    # Allocated once.
-    seg_tensor = similar(out)
+    # Scratch buffer for Horner's method
+    # Must hold intermediate calculation B_k, which grows up to size D^(M-1).
+    # Since Tensor{T,D,M} accommodates up to D^M, this is safe.
+    B_tensor = similar(out)
 
     @inbounds begin
         for i in 1:length(path)-1
-            # SVector subtraction is stack-allocated and fast
             Δ = path[i+1] - path[i]
-            
-            # 1. Compute exp(Δ) -> seg_tensor
-            exp!(seg_tensor, Δ)
-            
-            # 2. Accumulate: out = out ⊗ seg_tensor (in-place)
-            mul_accumulate!(out, seg_tensor)
+            # Core Horner Update
+            update_signature_horner!(out, Δ, B_tensor)
         end
     end
 
     return out
 end
 
+# Fallback for generic AbstractTensor types
 function signature_path!(out::AT, path::Vector{SVector{D,T}}) where {D,T,AT<:AbstractTensor{T}}
     @assert length(path) ≥ 2
     a = out
     b = similar(out)
     seg = similar(out)
-    
     Δ1 = path[2] - path[1]
     exp!(a, Δ1)
-    
     for i in 2:length(path)-1
         Δ = path[i+1] - path[i]
         exp!(seg, Δ)
         mul!(b, a, seg)
         a, b = b, a
     end
-    
     if a !== out; copy!(out, a); end
     return out
 end

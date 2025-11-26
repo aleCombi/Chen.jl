@@ -41,7 +41,6 @@ function Tensor{T,D,M}(coeffs::Vector{T}) where {T,D,M}
     return Tensor{T,D,M}(coeffs, offsets)
 end
 
-# Dynamic Factory
 function Tensor(coeffs::Vector{T}, d::Int, m::Int) where {T}
     return _make_tensor(coeffs, Val(d), Val(m))
 end
@@ -94,152 +93,179 @@ end
     (t.coeffs[t.offsets[1] + 1] = one(T); t)
 
 # -------------------------------------------------------------------
-# exp! (Specialized)
+# Horner's Method Kernel (The Algorithm from pySigLib)
 # -------------------------------------------------------------------
 
-@generated function exp!(out::Tensor{T,D,M}, x::SVector{D,T}) where {T,D,M}
+"""
+    update_signature_horner!(A, z, B)
+
+Updates signature tensor A in-place using increment vector z via Horner's method.
+B is a scratch buffer of the same type as A (used for intermediate B_k).
+"""
+@generated function update_signature_horner!(
+    A_tensor::Tensor{T,D,M}, 
+    z::SVector{D,T}, 
+    B_tensor::Tensor{T,D,M}
+) where {T,D,M}
+    
     off = level_starts0(D, M)
-    
-    level_loops = Expr[]
-    
-    for k in 2:M
-        prev_len_val = D^(k-1)
-        prev_start = off[k] + 1
-        cur_start  = off[k+1] + 1
+    updates = Expr[]
+
+    # Main Loop: Update levels k from M down to 2
+    for k in M:-1:2
         
-        # Unroll the loop over D dimensions
-        push!(level_loops, quote
-            scale = inv(T($k))
-            Base.@nexprs $D i -> begin
-                val = scale * x[i]
-                dest_ptr = $cur_start + (i - 1) * $prev_len_val
-                # Vectorized copy-scale
-                @turbo for j in 0:$(prev_len_val - 1)
-                    coeffs[dest_ptr + j] = val * coeffs[$prev_start + j]
+        ops = Expr[]
+        
+        # 1. Initialize B (scratch) for this level
+        # B starts as A_0 ⊗ z/k. Since A_0=1, B = z/k.
+        push!(ops, quote
+            inv_k = inv(T($k))
+            val_D = $D
+            @turbo for d in 1:val_D
+                B[d] = z[d] * inv_k
+            end
+        end)
+        
+        current_B_len = D
+        
+        # 2. Accumulate intermediate terms (A_i) and expand B
+        # Loop i from 1 to k-2
+        for i in 1:(k-2)
+            
+            next_scale = inv(T(k - i))
+            a_start = off[i+1] # Offset for A_i
+            
+            # Step 2a: B = B + A_i
+            # Step 2b: B = B ⊗ (z * next_scale)
+            # We perform expansion backwards to do it in-place in B.
+            
+            push!(ops, quote
+                # a. Add A_i to B
+                lim_B = $current_B_len
+                @turbo for x in 1:lim_B
+                    B[x] += coeffs[$a_start + x]
+                end
+                
+                # b. Expand B (Backwards iteration)
+                s = $next_scale
+                val_D = $D
+                
+                # Iterate backwards to allow in-place update
+                for r in lim_B:-1:1
+                   val = B[r]
+                   base_idx = (r-1)*val_D
+                   
+                   @turbo for c in 1:val_D
+                       B[base_idx + c] = val * z[c] * s
+                   end
+                end
+            end)
+            
+            current_B_len *= D
+        end
+        
+        # 3. Final Step for Level k
+        # Add A_{k-1} to B, then multiply by z (scale 1), and add result directly to A_k.
+        
+        prev_level_idx = k - 1
+        a_prev_start = off[prev_level_idx+1]
+        a_tgt_start  = off[k+1]
+        
+        push!(ops, quote
+            val_D = $D
+            lim_B = $current_B_len
+            # Loop over elements of B (which corresponds to level k-1 size)
+            for r in 1:lim_B
+                # val = B[r] + A_{k-1}[r]
+                val = B[r] + coeffs[$a_prev_start + r]
+                
+                # Expand into A_k
+                base_idx = $a_tgt_start + (r-1)*val_D
+                
+                @turbo for c in 1:val_D
+                    coeffs[base_idx + c] += val * z[c]
                 end
             end
         end)
+        
+        push!(updates, Expr(:block, ops...))
     end
-
-    quote
-        coeffs = out.coeffs
-        # Level 0
-        @inbounds coeffs[$(off[1] + 1)] = one(T)
-        
-        # Level 1
-        start1 = $(off[2] + 1)
-        @inbounds for i in 1:D
-            coeffs[start1 + i - 1] = x[i]
+    
+    # Handle Level 1: A_1 = A_1 + z
+    push!(updates, quote
+        start_1 = $(off[2])
+        val_D = $D
+        @turbo for d in 1:val_D
+            coeffs[start_1 + d] += z[d]
         end
+    end)
+
+    return quote
+        coeffs = A_tensor.coeffs
+        B      = B_tensor.coeffs
         
-        # Levels 2..M
         @inbounds begin
-            $(Expr(:block, level_loops...))
+            $(Expr(:block, updates...))
         end
         return nothing
     end
 end
 
 # -------------------------------------------------------------------
-# mul_accumulate! (Optimized)
+# Fallback / Utility Functions
 # -------------------------------------------------------------------
 
-"""
-    mul_accumulate!(S, seg)
-Updates S = S ⊗ seg in-place.
-Iterates levels downwards.
-"""
-@generated function mul_accumulate!(
-    S_tensor::Tensor{T,D,M}, seg_tensor::Tensor{T,D,M}
-) where {T,D,M}
-    
+@generated function exp!(out::Tensor{T,D,M}, x::SVector{D,T}) where {T,D,M}
     off = level_starts0(D, M)
-    block_updates = Expr[]
-    
-    for k in M:-1:1
-        updates_k = Expr[]
-        
-        out_start = off[k+1] + 1
-        len_k = D^k
-        
-        # 1. Base term: S^k += seg^k (since S^0 = 1)
-        push!(updates_k, quote
-             @turbo for j in 0:$(len_k - 1)
-                 S[$(out_start) + j] += seg[$(out_start) + j]
-             end
-        end)
-        
-        # 2. Convolution: S^k += S^{k-j} ⊗ seg^j
-        for j in 1:(k-1)
-            s_prev_start = off[k - j + 1] + 1
-            e_j_start    = off[j + 1] + 1
-            
-            dim_s = D^(k-j) 
-            dim_e = D^j     
-
-            # We fuse the inner loop logic. 
-            # Note: For small D^j, @turbo is good.
-            push!(updates_k, quote
-                for u in 0:$(dim_s - 1)
-                    val_s = S[$s_prev_start + u]
-                    row_target = $out_start + u * $dim_e
-                    @turbo for v in 0:$(dim_e - 1)
-                        S[row_target + v] += val_s * seg[$e_j_start + v]
-                    end
+    level_loops = Expr[]
+    for k in 2:M
+        prev_len = D^(k-1)
+        prev_s = off[k] + 1; cur_s = off[k+1] + 1
+        push!(level_loops, quote
+            scale = inv(T($k))
+            val_D = $D
+            for i in 1:val_D
+                val = scale * x[i]
+                dest = $cur_s + (i - 1) * $prev_len
+                @turbo for j in 0:$(prev_len - 1)
+                    coeffs[dest + j] = val * coeffs[$prev_s + j]
                 end
-            end)
-        end
-        
-        push!(block_updates, Expr(:block, updates_k...))
+            end
+        end)
     end
-
-    return quote
-        S   = S_tensor.coeffs
-        seg = seg_tensor.coeffs
-        
-        @inbounds begin
-            $(Expr(:block, block_updates...))
-        end
-        return S_tensor
+    quote
+        coeffs = out.coeffs
+        coeffs[$(off[1] + 1)] = one(T)
+        s1 = $(off[2] + 1)
+        val_D = $D
+        @inbounds for i in 1:val_D; coeffs[s1 + i - 1] = x[i]; end
+        @inbounds begin; $(Expr(:block, level_loops...)); end
+        return nothing
     end
 end
-
-# -------------------------------------------------------------------
-# mul! (Generic)
-# -------------------------------------------------------------------
 
 @generated function mul!(
     out_tensor::Tensor{T,D,M}, x1_tensor::Tensor{T,D,M}, x2_tensor::Tensor{T,D,M}
 ) where {T,D,M}
     off = level_starts0(D, M)
     level_blocks = Expr[]
-    
     for k in 1:M
-        out_len_k = D^k
-        out_start = off[k+1] + 1
-        
+        out_len = D^k; out_s = off[k+1] + 1
         push!(level_blocks, quote
-            if a0 == one(T)
-                copyto!(out, $out_start, x2, $out_start, $out_len_k)
-            elseif a0 == zero(T)
-                @turbo for j in 0:$(out_len_k-1); out[$out_start + j] = zero(T); end
-            else
-                @turbo for j in 0:$(out_len_k-1); out[$out_start + j] = a0 * x2[$out_start + j]; end
-            end
+            if a0 == one(T); copyto!(out, $out_s, x2, $out_s, $out_len)
+            elseif a0 == zero(T); @turbo for j in 0:$(out_len-1); out[$out_s + j] = zero(T); end
+            else; @turbo for j in 0:$(out_len-1); out[$out_s + j] = a0 * x2[$out_s + j]; end; end
             
             $(let inner = Expr[]
                 a_len = D
                 for i in 1:(k-1)
                     b_len = D^(k-i)
-                    a_start = off[i+1] + 1
-                    b_start = off[k-i+1] + 1
+                    a_s = off[i+1] + 1; b_s = off[k-i+1] + 1
                     push!(inner, quote
                         for ai in 0:$(a_len-1)
-                            val_a = x1[$a_start + ai]
-                            row_t = $out_start + ai * $b_len
-                            @turbo for bi in 0:$(b_len-1)
-                                out[row_t + bi] += val_a * x2[$b_start + bi]
-                            end
+                            val_a = x1[$a_s + ai]
+                            row = $out_s + ai * $b_len
+                            @turbo for bi in 0:$(b_len-1); out[row + bi] += val_a * x2[$b_s + bi]; end
                         end
                     end)
                     a_len *= D
@@ -248,52 +274,29 @@ end
             end)
 
             if b0 != zero(T)
-                if b0 == one(T)
-                    @turbo for j in 0:$(out_len_k-1); out[$out_start + j] += x1[$out_start + j]; end
-                else
-                    @turbo for j in 0:$(out_len_k-1); out[$out_start + j] += b0 * x1[$out_start + j]; end
-                end
+                if b0 == one(T); @turbo for j in 0:$(out_len-1); out[$out_s + j] += x1[$out_s + j]; end
+                else; @turbo for j in 0:$(out_len-1); out[$out_s + j] += b0 * x1[$out_s + j]; end; end
             end
         end)
     end
-
     quote
-        out = out_tensor.coeffs
-        x1  = x1_tensor.coeffs
-        x2  = x2_tensor.coeffs
-        a0 = x1[$(off[1]+1)]; b0 = x2[$(off[1]+1)]
-        out[$(off[1]+1)] = a0 * b0
-        @inbounds begin
-            $(Expr(:block, level_blocks...))
-        end
+        out = out_tensor.coeffs; x1 = x1_tensor.coeffs; x2 = x2_tensor.coeffs
+        a0 = x1[$(off[1]+1)]; b0 = x2[$(off[1]+1)]; out[$(off[1]+1)] = a0 * b0
+        @inbounds begin; $(Expr(:block, level_blocks...)); end
         return out_tensor
     end
 end
 
-# -------------------------------------------------------------------
-# Log
-# -------------------------------------------------------------------
-
 function log!(out::Tensor{T,D,M}, g::Tensor{T,D,M}) where {T,D,M}
-    offsets = out.offsets
-    i0 = offsets[1] + 1
-    
-    X = similar(out)
-    copy!(X, g)
-    X.coeffs[i0] -= one(T) 
-
+    i0 = out.offsets[1] + 1
+    X = similar(out); copy!(X, g); X.coeffs[i0] -= one(T)
     _zero!(out)
-    P = similar(out) 
-    Q = similar(out) 
-    copy!(P, X)
-
+    P = similar(out); copy!(P, X); Q = similar(out)
     sgn = one(T)
     for k in 1:M
         add_scaled!(out, P, sgn / T(k))
         if k < M
-            mul!(Q, P, X)
-            Q.coeffs[i0] = zero(T)
-            P, Q = Q, P
+            mul!(Q, P, X); Q.coeffs[i0] = zero(T); P, Q = Q, P
         end
         sgn = -sgn
     end
