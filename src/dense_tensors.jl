@@ -91,15 +91,15 @@ end
     (t.coeffs[t.offsets[1] + 1] = one(T); t)
 
 # -------------------------------------------------------------------
-# Optimized Horner Kernel (Block SVector IO)
+# Optimized Horner Kernel (Pointer-based Block IO)
 # -------------------------------------------------------------------
 
 """
     update_signature_horner!(A, z, B1, B2)
 
 Updates signature A using increment z via Horner's method.
-Optimization: Uses `unsafe_store!` with `Ptr{SVector{D,T}}` to write 
-contiguous blocks of dimension D in a single instruction, bypassing loops.
+Uses explicit pointer arithmetic and SVector casting to force 
+block-level SIMD instructions, bypassing standard loop overhead.
 """
 @generated function update_signature_horner!(
     A_tensor::Tensor{T,D,M}, 
@@ -111,31 +111,23 @@ contiguous blocks of dimension D in a single instruction, bypassing loops.
     off = level_starts0(D, M)
     updates = Expr[]
 
-    # Main Loop: Update levels k from M down to 2
+    # Iterate levels k from M down to 2
     for k in M:-1:2
         
         ops = Expr[]
         
-        # 1. Initialize B1 (scratch) for this level
+        # 1. Initialize scratch B1 = z / k
         push!(ops, quote
             inv_k = inv(T($k))
-            
-            # SVector broadcast/scale
             val_init = z * inv_k
-            
-            # Unsafe store SVector to B1[1]
-            # Treats B1 as Ptr{SVector{D,T}} and writes 1 element (block of D floats)
+            # Write entire SVector block to B1[1]
             unsafe_store!(Ptr{SVector{$D, T}}(pointer(B1)), val_init, 1)
         end)
         
         current_len = D 
-        # Note: current_len tracks the number of SCALARS in the SOURCE buffer
-        # In step 1, we wrote D scalars (1 block). Source for step 2 is size D.
         
-        # 2. Accumulate and Expand
-        # We iterate through the source scalars. Each scalar generates one SVector block in dest.
+        # 2. Accumulate and Expand (Ping-Pong)
         for i in 1:(k-2)
-            
             next_scale = inv(T(k - i))
             a_start = off[i+1]
             
@@ -146,26 +138,25 @@ contiguous blocks of dimension D in a single instruction, bypassing loops.
                 len = $current_len
                 scale = $next_scale
                 
-                # Raw pointers
                 ptr_src = pointer($src_buf)
                 ptr_dst = pointer($dst_buf)
                 ptr_coeffs = pointer(coeffs)
-                ptr_dst_sv = Ptr{SVector{$D, T}}(ptr_dst)
+                ptr_dst_sv = Ptr{SVector{$D, T}}(ptr_dst) # Cast dest to vector ptr
                 
                 z_vec = z
                 
-                # Iterate linearly forward over source scalars
+                # Iterate linearly forward over SCALARS in source
+                # "len" is number of scalars in source
                 for r in 1:len
-                    # 1. Read: Scalar accumulator + A_i scalar
+                    # Read Scalar accumulators
                     src_val = unsafe_load(ptr_src, r)
                     coeff_val = unsafe_load(ptr_coeffs, $a_start + r)
                     val = src_val + coeff_val
                     
-                    # 2. Compute: Rank-1 expansion (Scalar * Vector)
+                    # Compute Vector block: (scalar * scale) * SVector
                     res_vec = (val * scale) * z_vec
                     
-                    # 3. Write: Store SVector block to destination
-                    # Writing to block index r (1-based)
+                    # Write Vector block to dest
                     unsafe_store!(ptr_dst_sv, res_vec, r)
                 end
             end)
@@ -173,9 +164,7 @@ contiguous blocks of dimension D in a single instruction, bypassing loops.
             current_len *= D
         end
         
-        # 3. Final Step for Level k
-        # Read final source buffer, add A_{k-1}, expand into A_k (accumulate)
-        
+        # 3. Final Step for Level k: Update A directly
         last_iter_count = k - 2
         final_src_buf = (last_iter_count > 0 && isodd(last_iter_count)) ? :B2 : :B1
         
@@ -189,12 +178,11 @@ contiguous blocks of dimension D in a single instruction, bypassing loops.
             ptr_src = pointer($final_src_buf)
             ptr_coeffs = pointer(coeffs)
             
-            z_vec = z
-            
-            # Pointer to A_k start.
-            # NOTE: We assume alignment is sufficient or architecture supports unaligned stores (standard on x64/arm64)
+            # Target is A_k, cast to SVector pointer
             ptr_Ak_base = pointer(coeffs, $a_tgt_start + 1)
             ptr_Ak_sv = Ptr{SVector{$D, T}}(ptr_Ak_base)
+            
+            z_vec = z
             
             for r in 1:len
                 # Scalar Load
@@ -205,8 +193,7 @@ contiguous blocks of dimension D in a single instruction, bypassing loops.
                 # Vector Calc
                 inc_vec = val * z_vec
                 
-                # RMW (Read-Modify-Write) on A_k
-                # Load existing block, add increment, store back
+                # RMW: Load Vector, Add, Store Vector
                 unsafe_store!(ptr_Ak_sv, unsafe_load(ptr_Ak_sv, r) + inc_vec, r)
             end
         end)
@@ -217,11 +204,10 @@ contiguous blocks of dimension D in a single instruction, bypassing loops.
     # Handle Level 1
     push!(updates, quote
         start_1 = $(off[2])
-        # A_1 is at start_1 + 1
         ptr_A1 = pointer(coeffs, start_1 + 1)
         ptr_A1_sv = Ptr{SVector{$D, T}}(ptr_A1)
         
-        # A_1 += z
+        # A_1 += z (Vector load/add/store)
         unsafe_store!(ptr_A1_sv, unsafe_load(ptr_A1_sv, 1) + z, 1)
     end)
 
@@ -235,7 +221,7 @@ contiguous blocks of dimension D in a single instruction, bypassing loops.
 end
 
 # -------------------------------------------------------------------
-# Fallback / Utility Functions
+# Fallback Functions (Not used in hot path)
 # -------------------------------------------------------------------
 
 @generated function exp!(out::Tensor{T,D,M}, x::SVector{D,T}) where {T,D,M}
