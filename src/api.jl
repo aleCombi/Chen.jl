@@ -12,31 +12,6 @@ function sig(path::AbstractMatrix{T}, m::Int) where T
     return _flatten_tensor(tensor)
 end
 
-function sig_enzyme(path_matrix::Matrix{Float64}, m::Int)
-    D = size(path_matrix, 2)
-    M = m
-    N = size(path_matrix, 1)
-    
-    # Allocate working buffers
-    max_buffer_size = D^(M-1)
-    B1 = Vector{Float64}(undef, max_buffer_size)
-    B2 = Vector{Float64}(undef, max_buffer_size)
-    
-    # Initialize signature tensor
-    a = Tensor{Float64, D, M}()
-    
-    # Process each segment
-    @inbounds for i in 1:N-1
-        # Create SVector for displacement
-        z = SVector{D,Float64}(ntuple(j -> path_matrix[i+1, j] - path_matrix[i, j], D))
-        
-        update_signature_horner_enzyme!(a, z, B1, B2)
-    end
-    
-    return _flatten_tensor(a)
-end
-
-
 # --- 2. Preparation (prepare) ---
 struct BasisCache{T}
     d::Int

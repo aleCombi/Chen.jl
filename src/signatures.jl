@@ -67,16 +67,6 @@ function signature_path!(out::AT, path::Vector{SVector{D,T}}) where {D,T,AT<:Abs
     return out
 end
 
-# src/signatures.jl
-
-# src/signatures.jl
-
-# src/signatures.jl or src/api.jl
-
-# src/signatures.jl or wherever you put signature_from_matrix
-
-# src/signatures.jl
-
 """
     signature_from_matrix!(out, seg, tmp, Δ_vec, path_matrix, m)
     
