@@ -2,12 +2,12 @@ using ChenSignatures
 using Enzyme
 using LinearAlgebra
 
-println("Comparing Enzyme vs Finite Differences...")
+println("Testing return flattened tensor...")
 
 # Test path
 path = [0.0 0.0; 1.0 1.0; 2.0 2.0]
 
-# Inline version (Enzyme-compatible)
+# Return flattened tensor (no sum)
 function signature_enzyme_inline(path_matrix::Matrix{Float64}, m::Int)
     D = size(path_matrix, 2)
     M = m
@@ -34,13 +34,16 @@ function signature_enzyme_inline(path_matrix::Matrix{Float64}, m::Int)
         a, b = b, a
     end
     
-    return sum(ChenSignatures._flatten_tensor(a))
+    return ChenSignatures._flatten_tensor(a)  # Return vector, not scalar
 end
 
-loss_enzyme(p) = signature_enzyme_inline(p, 3)
+# Loss takes sum to make scalar for differentiation
+loss_enzyme(p) = sum(signature_enzyme_inline(p, 3))
 
 println("\n=== Forward pass ===")
-println("enzyme: ", loss_enzyme(path))
+result = signature_enzyme_inline(path, 3)
+println("Result length: ", length(result))
+println("Sum: ", sum(result))
 
 println("\n=== Enzyme gradient ===")
 grad_enzyme = zeros(size(path))
@@ -60,6 +63,4 @@ end
 display(grad_fd)
 
 println("\n\n=== Comparison ===")
-println("Difference: ", norm(grad_enzyme - grad_fd))
-println("Relative error: ", norm(grad_enzyme - grad_fd) / norm(grad_fd))
 println("Match: ", isapprox(grad_enzyme, grad_fd, rtol=1e-4))
