@@ -2,20 +2,21 @@
 
 path_kind: "sin"
 
-# N scaling (row 1): short to quite long paths
-Ns: [200]
+# N scaling (row 1): path lengths
+Ns: [200, 1000, 2000, 4000, 10000, 20000, 40000]
 
-# d scaling (row 2): low to moderately high dimension
-Ds: [2]
+# d scaling (row 2): path dimensions
+Ds: [2, 3, 5, 7, 10]
 
-# m scaling (row 3): increasing algebraic complexity, but still safe in size
-Ms: [2]
+# m scaling (row 3): signature truncation levels
+Ms: [2, 3, 4, 5, 6]
 
 operations: ["logsignature", "signature"]
 
 runs_dir: "runs"
 
-# 10 is enough for smoothing; with this grid it will already be heavy
+# number of repeats for each configuration
 repeats: 10
 
+# method for logsignature computation in iisignature
 logsig_method: "S"
