@@ -606,3 +606,118 @@ function sig_enzyme_horner_svec(path_matrix::Matrix{Float64}, m::Int)
     
     return _flatten_tensor(a)
 end
+
+using StaticArrays
+
+using Base.Cartesian
+
+@generated function update_signature_horner_enzyme_generated!(
+    A_tensor::Tensor{T,D,M},
+    z::SVector{D,T},
+    B1::Vector{T},
+    B2::Vector{T},
+) where {T,D,M}
+
+    # Precompute offsets at generation time (depends only on D, M)
+    off = level_starts0(D, M)
+
+    body = Expr(:block)
+
+    # coeffs alias
+    push!(body.args, :(coeffs = A_tensor.coeffs))
+
+    # k = M, M-1, ..., 2
+    for k in M:-1:2
+        # 1) inv_k and initial B1 = z * inv_k
+        push!(body.args, quote
+            inv_k = inv($T($k))
+            Base.Cartesian.@nexprs $D d -> B1[d] = z[d] * inv_k
+            current_len = $D
+        end)
+
+        # 2) Inner Horner iterations for this k
+        for i in 1:(k-2)
+            next_scale_expr = :(inv($T($(k - i))))
+            a_start = off[i+1]        # 0-based start of level i segment
+            src_sym  = isodd(i) ? :B1 : :B2
+            dst_sym  = isodd(i) ? :B2 : :B1
+
+            push!(body.args, quote
+                src_buf = $src_sym
+                dst_buf = $dst_sym
+                next_scale = $next_scale_expr
+
+                for r in 1:current_len
+                    src_val   = src_buf[r]
+                    coeff_val = coeffs[$a_start + r]
+                    val       = src_val + coeff_val
+                    scaled    = val * next_scale
+
+                    base_idx = (r - 1) * $D
+                    Base.Cartesian.@nexprs $D d -> dst_buf[base_idx + d] = scaled * z[d]
+                end
+
+                current_len *= $D
+            end)
+        end
+
+        # 3) Final update for level k from previous level (k-1)
+        last_iter_count = k - 2
+        final_src_sym = (last_iter_count > 0 && isodd(last_iter_count)) ? :B2 : :B1
+
+        a_prev_start = off[k]      # level (k-1) start (0-based)
+        a_tgt_start  = off[k+1]    # level k start (0-based)
+
+        push!(body.args, quote
+            final_src_buf = $final_src_sym
+
+            for r in 1:current_len
+                src_val   = final_src_buf[r]
+                coeff_val = coeffs[$a_prev_start + r]
+                val       = src_val + coeff_val
+
+                base_idx = (r - 1) * $D
+                Base.Cartesian.@nexprs $D d -> begin
+                    coeffs[$a_tgt_start + base_idx + d] += val * z[d]
+                end
+            end
+        end)
+    end
+
+    # 4) Level 1 update: A¹ += z
+    start_1 = off[2]  # level 1 start (0-based)
+    push!(body.args, :(Base.Cartesian.@nexprs $D d -> coeffs[$start_1 + d] += z[d]))
+
+    # Wrap everything in @inbounds and return nothing
+    return quote
+        @inbounds begin
+            $body
+        end
+        return nothing
+    end
+end
+
+
+function sig_enzyme_horner_generated(path_matrix::Matrix{Float64}, m::Int)
+    D = size(path_matrix, 2)
+    M = m
+    N = size(path_matrix, 1)
+    
+    # Allocate working buffers
+    max_buffer_size = D^(M-1)
+    B1 = Vector{Float64}(undef, max_buffer_size)
+    B2 = Vector{Float64}(undef, max_buffer_size)
+    
+    # Initialize signature tensor
+    a = Tensor{Float64, D, M}()
+    
+    # Process each segment
+    @inbounds for i in 1:N-1
+        # Create SVector for displacement
+        z = SVector{D,Float64}(ntuple(j -> path_matrix[i+1, j] - path_matrix[i, j], D))
+        
+        update_signature_horner_enzyme_generated!(a, z, B1, B2)
+    end
+    
+    return _flatten_tensor(a)
+end
