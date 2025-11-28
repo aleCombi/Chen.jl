@@ -125,26 +125,102 @@ end
 
 # -------- sweep + write grid to file --------
 
+function setup_run_folder(run_type::String, runs_root::String)
+    ts = Dates.format(Dates.now(), "yyyymmdd_HHMMSS")
+    run_dir = joinpath(runs_root, "$(run_type)_$(ts)")
+    mkpath(run_dir)
+    
+    println("Created run folder: $run_dir")
+    return run_dir, ts
+end
+
+function write_metadata(run_dir::String, run_type::String, ts::String, cfg)
+    # Write config snapshot
+    config_src = joinpath(@__DIR__, "benchmark_config.yaml")
+    if isfile(config_src)
+        cp(config_src, joinpath(run_dir, "benchmark_config.yaml"); force=true)
+    end
+    
+    # Write resolved config
+    config_resolved = joinpath(run_dir, "config_resolved.txt")
+    open(config_resolved, "w") do f
+        println(f, "Resolved Configuration")
+        println(f, "=" ^ 60)
+        println(f, "Ns:         $(cfg.Ns)")
+        println(f, "Ds:         $(cfg.Ds)")
+        println(f, "Ms:         $(cfg.Ms)")
+        println(f, "path_kind:  $(cfg.path_kind)")
+        println(f, "operations: $(cfg.operations)")
+        println(f, "repeats:    $(cfg.repeats)")
+    end
+    
+    # Write metadata
+    metadata_file = joinpath(run_dir, "run_metadata.txt")
+    open(metadata_file, "w") do f
+        println(f, "Run Type: $run_type")
+        println(f, "Timestamp: $ts")
+        println(f, "Start Time: $(Dates.format(Dates.now(), "yyyy-mm-dd HH:MM:SS"))")
+    end
+    
+    return metadata_file
+end
+
+function finalize_run_folder(run_dir::String, summary::Dict)
+    summary_file = joinpath(run_dir, "SUMMARY.txt")
+    open(summary_file, "w") do f
+        println(f, "Benchmark Run Summary")
+        println(f, "=" ^ 60)
+        println(f)
+        println(f, "Results:")
+        println(f, "-" ^ 60)
+        for (key, value) in summary
+            println(f, "$key: $value")
+        end
+        println(f)
+        println(f, "End Time: $(Dates.format(Dates.now(), "yyyy-mm-dd HH:MM:SS"))")
+    end
+    
+    println("=" ^ 60)
+    println("Run completed. Summary written to: $summary_file")
+end
+
 function run_bench()
     cfg = load_config()
     Ns, Ds, Ms = cfg.Ns, cfg.Ds, cfg.Ms
     path_kind  = cfg.path_kind
-    runs_dir   = cfg.runs_dir
+    runs_root  = joinpath(@__DIR__, cfg.runs_dir)
     repeats    = cfg.repeats
     operations = cfg.operations
 
     # Benchmark both path types
     path_types = [:Matrix, :VectorSVector]
 
-    println("Running Julia benchmark with config:")
+    println("=" ^ 60)
+    println("Julia Benchmark Suite")
+    println("=" ^ 60)
+    println("Configuration:")
     println("  path_kind  = $path_kind")
     println("  Ns         = $(Ns)")
     println("  Ds         = $(Ds)")
     println("  Ms         = $(Ms)")
     println("  operations = $(operations)")
     println("  path_types = $(path_types)")
-    println("  runs_dir   = \"$runs_dir\"")
     println("  repeats    = $repeats")
+    println()
+
+    # Check if orchestrator is overriding output location
+    custom_csv = get(ENV, "BENCHMARK_OUT_CSV", "")
+    if !isempty(custom_csv)
+        # Orchestrator mode: write to specified location
+        run_dir = dirname(custom_csv)
+        file = custom_csv
+        println("Orchestrator mode: writing to $file")
+    else
+        # Standalone mode: create own run folder
+        run_dir, ts = setup_run_folder("benchmark_julia", runs_root)
+        write_metadata(run_dir, "benchmark_julia", ts, cfg)
+        file = joinpath(run_dir, "results.csv")
+    end
 
     results = NamedTuple[]
 
@@ -152,21 +228,7 @@ function run_bench()
         push!(results, bench_case(d, m, N, path_kind, op, ptype, repeats))
     end
 
-    # Base runs dir (for standalone Julia usage)
-    base_runs_path = joinpath(@__DIR__, runs_dir)
-    isdir(base_runs_path) || mkpath(base_runs_path)
-
-    # Allow orchestrator to override output path
-    custom_csv = get(ENV, "BENCHMARK_OUT_CSV", "")
-    if !isempty(custom_csv)
-        file = custom_csv
-        run_path = dirname(file)
-        isdir(run_path) || mkpath(run_path)
-    else
-        ts   = Dates.format(Dates.now(), "yyyymmdd_HHMMSS")
-        file = joinpath(base_runs_path, "run_julia_$ts.csv")
-    end
-
+    # Write results
     header = ["N", "d", "m", "path_kind", "operation", "language", "library", "method", "path_type", "t_ms", "alloc_KiB"]
     data = Array{Any}(undef, length(results) + 1, length(header))
     data[1, :] = header
@@ -187,8 +249,21 @@ function run_bench()
 
     writedlm(file, data, ',')
 
-    println("============================================================")
-    println("Benchmark grid written to: $file")
+    println("=" ^ 60)
+    println("Results written to: $file")
+    
+    # Only write summary in standalone mode
+    if isempty(custom_csv)
+        summary = Dict(
+            "total_benchmarks" => length(results),
+            "path_types" => join(unique([r.path_type for r in results]), ", "),
+            "operations" => join(unique([String(r.operation) for r in results]), ", "),
+            "output_csv" => basename(file)
+        )
+        
+        finalize_run_folder(run_dir, summary)
+    end
+    
     return file
 end
 

@@ -1,4 +1,7 @@
-# run_benchmark.py
+# compare_benchmarks.py
+# Orchestrator script that runs both Julia and Python benchmarks,
+# then generates comparison CSV and performance plots.
+
 import csv
 import re
 import subprocess
@@ -6,6 +9,7 @@ import os
 from pathlib import Path
 from datetime import datetime
 import shutil
+import sys
 
 import matplotlib.pyplot as plt
 
@@ -34,11 +38,13 @@ def ensure_uv_project():
 
 # -------- run Julia benchmark --------
 def run_julia_benchmark(run_dir: Path, base_env: dict) -> Path:
-    print("=== Running Julia benchmark in local project ===")
+    print("\n" + "=" * 60)
+    print("Running Julia Benchmark")
+    print("=" * 60)
 
     env = base_env.copy()
     env["JULIA_PROJECT"] = str(SCRIPT_DIR)
-    env["BENCHMARK_OUT_CSV"] = str(run_dir / "run_julia.csv")
+    env["BENCHMARK_OUT_CSV"] = str(run_dir / "julia_results.csv")
 
     julia_script = str(SCRIPT_DIR / "benchmark.jl")
 
@@ -56,26 +62,25 @@ def run_julia_benchmark(run_dir: Path, base_env: dict) -> Path:
 
     print(result.stdout)
     if result.returncode != 0:
-        print(result.stderr)
+        print(result.stderr, file=sys.stderr)
         raise RuntimeError(f"Julia benchmark failed with code {result.returncode}")
 
-    m = re.search(r"Benchmark grid written to:\s*(.*)", result.stdout)
-    if not m:
-        raise RuntimeError("Could not find output path in Julia benchmark output.")
-    path_str = m.group(1).strip()
-    julia_csv = Path(path_str)
-    if not julia_csv.is_absolute():
-        julia_csv = (SCRIPT_DIR / julia_csv).resolve()
-    print(f"Julia CSV: {julia_csv}")
+    julia_csv = run_dir / "julia_results.csv"
+    if not julia_csv.exists():
+        raise RuntimeError(f"Expected Julia output not found: {julia_csv}")
+    
+    print(f"✓ Julia results: {julia_csv.name}")
     return julia_csv
 
 
 # -------- run Python benchmark --------
 def run_python_benchmark(run_dir: Path, base_env: dict) -> Path:
-    print("=== Running Python benchmark suite via uv ===")
+    print("\n" + "=" * 60)
+    print("Running Python Benchmark")
+    print("=" * 60)
 
     env = base_env.copy()
-    env["BENCHMARK_RUN_DIR"] = str(run_dir)
+    env["BENCHMARK_OUT_CSV"] = str(run_dir / "python_results.csv")
 
     result = subprocess.run(
         ["uv", "run", "benchmark.py"],
@@ -91,18 +96,15 @@ def run_python_benchmark(run_dir: Path, base_env: dict) -> Path:
 
     print(result.stdout)
     if result.returncode != 0:
-        print(result.stderr)
+        print(result.stderr, file=sys.stderr)
         raise RuntimeError(f"Python benchmark failed with code {result.returncode}")
 
-    m = re.search(r"Benchmark grid written to:\s*(.*)", result.stdout)
-    if not m:
-        raise RuntimeError("Could not find output path in Python benchmark output.")
-    path_str = m.group(1).strip()
-    py_csv = Path(path_str)
-    if not py_csv.is_absolute():
-        py_csv = (SCRIPT_DIR / py_csv).resolve()
-    print(f"Python CSV: {py_csv}")
-    return py_csv
+    python_csv = run_dir / "python_results.csv"
+    if not python_csv.exists():
+        raise RuntimeError(f"Expected Python output not found: {python_csv}")
+    
+    print(f"✓ Python results: {python_csv.name}")
+    return python_csv
 
 # -------- comparison logic --------
 
@@ -415,30 +417,20 @@ def make_plots(comparison_csv: Path, runs_dir: Path, cfg: dict):
 # -------- main --------
 
 def main():
+    from common import setup_run_folder, finalize_run_folder
+    
     cfg = load_config(CONFIG_PATH)
-    runs_root = SCRIPT_DIR / cfg.get("runs_dir", "runs")
-    print(f"Using runs root from config: {runs_root}")
+    
+    print("=" * 60)
+    print("Benchmark Comparison (Orchestrated)")
+    print("=" * 60)
+    print(f"Configuration:")
+    for k, v in sorted(cfg.items()):
+        print(f"  {k:15s} = {v}")
+    print()
 
-    # One directory per run
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_dir = runs_root / f"run_{ts}"
-    run_dir.mkdir(parents=True, exist_ok=True)
-    print(f"Current run directory: {run_dir}")
-
-    # Dump config snapshot
-    cfg_copy_path = run_dir / "benchmark_config.yaml"
-    if CONFIG_PATH.exists():
-        shutil.copy2(CONFIG_PATH, cfg_copy_path)
-    else:
-        cfg_copy_path.write_text("# benchmark_config.yaml not found at run time\n", encoding="utf-8")
-
-    # Dump "effective" config (after defaults) for debugging
-    cfg_effective_path = run_dir / "config_effective.txt"
-    with cfg_effective_path.open("w", encoding="utf-8") as f:
-        f.write("Effective benchmark config (Python view)\n")
-        f.write("=======================================\n")
-        for k, v in sorted(cfg.items()):
-            f.write(f"{k}: {v!r}\n")
+    # Setup comparison run folder
+    run_dir = setup_run_folder("benchmark_comparison", cfg)
 
     base_env = os.environ.copy()
 
@@ -447,6 +439,35 @@ def main():
     python_csv = run_python_benchmark(run_dir, base_env)
     comparison_csv = compare_runs(julia_csv, python_csv, run_dir)
     make_plots(comparison_csv, run_dir, cfg)
+    
+    # Prepare summary
+    summary = {
+        "julia_csv": julia_csv.name,
+        "python_csv": python_csv.name,
+        "comparison_csv": comparison_csv.name,
+        "plots": "comparison_3x2.png",
+    }
+    
+    # Add performance summary from comparison CSV
+    with comparison_csv.open("r", encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        by_comparison = {}
+        for row in reader:
+            key = f"{row['julia_library']}({row['julia_path_type']}) vs {row['python_library']}"
+            ratio = float(row["speed_ratio_python_over_julia"])
+            if key not in by_comparison:
+                by_comparison[key] = []
+            by_comparison[key].append(ratio)
+    
+    summary["performance"] = {}
+    for comp in sorted(by_comparison.keys()):
+        ratios = by_comparison[comp]
+        avg_ratio = sum(ratios) / len(ratios)
+        summary["performance"][comp] = f"{avg_ratio:.2f}x"
+    
+    finalize_run_folder(run_dir, summary)
+    print(f"\n✓ Orchestrated benchmark complete: {run_dir}")
+
 
 if __name__ == "__main__":
     main()

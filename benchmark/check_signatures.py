@@ -126,14 +126,27 @@ def compare_signatures():
     Ds = cfg.get("Ds", [2, 3, 5])
     Ms = cfg.get("Ms", [4, 6, 8])
     path_kind = cfg.get("path_kind", "sin")
-    runs_dir = SCRIPT_DIR / cfg.get("runs_dir", "runs")
     logsig_method = cfg.get("logsig_method", "O")
     operations = cfg.get("operations", ["signature", "logsignature"])
     
-    runs_dir.mkdir(parents=True, exist_ok=True)
+    print("=" * 60)
+    print("Signature Validation")
+    print("=" * 60)
+    print(f"Configuration:")
+    print(f"  Ns            = {Ns}")
+    print(f"  Ds            = {Ds}")
+    print(f"  Ms            = {Ms}")
+    print(f"  operations    = {operations}")
+    print(f"  path_kind     = {path_kind}")
+    print(f"  iisignature   = {'available' if HAS_IISIG else 'NOT AVAILABLE'}")
+    print(f"  pysiglib      = {'available' if HAS_PYSIGLIB else 'NOT AVAILABLE'}")
+    print()
 
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    out_csv = runs_dir / f"signature_compare_{ts}.csv"
+    # Setup run folder
+    from common import setup_run_folder, finalize_run_folder
+    run_dir = setup_run_folder("signature_check", cfg)
+
+    out_csv = run_dir / "validation_results.csv"
 
     fieldnames = [
         "N", "d", "m", "path_kind", "operation",
@@ -141,11 +154,9 @@ def compare_signatures():
         "max_abs_diff", "l2_diff", "rel_l2_diff", "status"
     ]
 
-    print(f"Comparing signatures...")
-    print(f"  operations:  {operations}")
-    print(f"  path_kind:   {path_kind} (Using non-linear path for rigour)")
-    print(f"  iisignature: {'available' if HAS_IISIG else 'NOT AVAILABLE'}")
-    print(f"  pysiglib:    {'available' if HAS_PYSIGLIB else 'NOT AVAILABLE'}")
+    total_tests = 0
+    passed_tests = 0
+    failed_tests = 0
 
     with out_csv.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -167,23 +178,26 @@ def compare_signatures():
                         if op == "logsignature" and d < 2:
                             continue
 
-                        print(f"Comparing {op} for N={N}, d={d}, m={m}, kind={path_kind}...")
+                        print(f"Validating {op} for N={N}, d={d}, m={m}...", end=" ")
 
                         # 1. Julia calculation (reference)
                         try:
                             sig_jl = julia_signature(N, d, m, path_kind, op)
                         except Exception as e:
-                            print(f"  Julia Failed: {e}")
+                            print(f"Julia Failed: {e}")
+                            failed_tests += 1
                             continue
 
                         # 2. Compare against iisignature
                         if HAS_IISIG:
+                            total_tests += 1
                             sig_iisig = iisignature_compute(path, m, op, logsig_method)
                             if sig_iisig is not None:
                                 if sig_iisig.shape != sig_jl.shape:
-                                    print(f"  iisig: SIZE MISMATCH jl={sig_jl.shape} py={sig_iisig.shape}")
+                                    print(f"iisig: SHAPE MISMATCH")
                                     status = "shape_mismatch"
                                     max_abs = l2 = rel_l2 = -1.0
+                                    failed_tests += 1
                                 else:
                                     diff = sig_jl - sig_iisig
                                     max_abs = float(np.max(np.abs(diff)))
@@ -192,8 +206,13 @@ def compare_signatures():
                                     rel_l2 = l2 / norm_ref if norm_ref > 1e-15 else 0.0
                                     
                                     # Loose tolerance for high degree signatures on float64
-                                    status = "OK" if (rel_l2 < 1e-7 or max_abs < 1e-12) else "FAIL"
-                                    print(f"  iisig:    len={len(sig_jl)}, diff={max_abs:.1e}, rel={rel_l2:.1e} -> {status}")
+                                    if rel_l2 < 1e-7 or max_abs < 1e-12:
+                                        status = "OK"
+                                        passed_tests += 1
+                                    else:
+                                        status = "FAIL"
+                                        failed_tests += 1
+                                    print(f"iisig: {status} (rel_err={rel_l2:.1e})")
 
                                 writer.writerow({
                                     "N": N, "d": d, "m": m,
@@ -209,12 +228,14 @@ def compare_signatures():
 
                         # 3. Compare against pysiglib
                         if HAS_PYSIGLIB:
+                            total_tests += 1
                             sig_pysig = pysiglib_compute(path, m, op)
                             if sig_pysig is not None:
                                 if sig_pysig.shape != sig_jl.shape:
-                                    print(f"  pysiglib: SIZE MISMATCH jl={sig_jl.shape} py={sig_pysig.shape}")
+                                    print(f"pysiglib: SHAPE MISMATCH")
                                     status = "shape_mismatch"
                                     max_abs = l2 = rel_l2 = -1.0
+                                    failed_tests += 1
                                 else:
                                     diff = sig_jl - sig_pysig
                                     max_abs = float(np.max(np.abs(diff)))
@@ -222,8 +243,13 @@ def compare_signatures():
                                     norm_ref = float(np.linalg.norm(sig_jl))
                                     rel_l2 = l2 / norm_ref if norm_ref > 1e-15 else 0.0
                                     
-                                    status = "OK" if rel_l2 < 1e-8 else "FAIL"
-                                    print(f"  pysiglib: len={len(sig_jl)}, diff={max_abs:.1e}, rel={rel_l2:.1e} -> {status}")
+                                    if rel_l2 < 1e-8:
+                                        status = "OK"
+                                        passed_tests += 1
+                                    else:
+                                        status = "FAIL"
+                                        failed_tests += 1
+                                    print(f"pysiglib: {status} (rel_err={rel_l2:.1e})")
 
                                 writer.writerow({
                                     "N": N, "d": d, "m": m,
@@ -237,7 +263,26 @@ def compare_signatures():
                                     "status": status,
                                 })
 
-    print(f"\nSignature comparison CSV written to: {out_csv}")
+    print("=" * 60)
+    print(f"Results written to: {out_csv}")
+    
+    # Prepare summary
+    summary = {
+        "total_tests": total_tests,
+        "passed": passed_tests,
+        "failed": failed_tests,
+        "pass_rate": f"{100 * passed_tests / total_tests:.1f}%" if total_tests > 0 else "N/A",
+        "output_csv": str(out_csv.name),
+    }
+    
+    print(f"\nValidation Summary:")
+    print(f"  Total tests: {total_tests}")
+    print(f"  Passed:      {passed_tests}")
+    print(f"  Failed:      {failed_tests}")
+    print(f"  Pass rate:   {summary['pass_rate']}")
+    
+    finalize_run_folder(run_dir, summary)
+    
     return out_csv
 
 if __name__ == "__main__":
