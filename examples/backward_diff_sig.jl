@@ -1,134 +1,65 @@
-# Complete working example with signature_from_matrix
 using ChenSignatures
 using Enzyme
-using FiniteDifferences
+using LinearAlgebra
 
-println("=" ^ 70)
-println("COMPLETE TEST: signature_from_matrix with Enzyme")
-println("=" ^ 70)
+println("Comparing Enzyme vs Finite Differences...")
 
-D, M = 3, 3
+# Test path
+path = [0.0 0.0; 1.0 1.0; 2.0 2.0]
 
-# Pre-allocate ALL buffers
-out = ChenSignatures.Tensor{Float64, D, M}()
-seg = ChenSignatures.Tensor{Float64, D, M}()
-tmp = ChenSignatures.Tensor{Float64, D, M}()
-Δ_vec = Vector{Float64}(undef, D)
-
-# Shadows for Enzyme
-out_shadow = ChenSignatures.Tensor{Float64, D, M}()
-seg_shadow = ChenSignatures.Tensor{Float64, D, M}()
-tmp_shadow = ChenSignatures.Tensor{Float64, D, M}()
-Δ_vec_shadow = zeros(Float64, D)
-
-# Test matrix
-path_matrix = [
-    0.0  0.0  0.0;
-    0.3  0.2  0.1;
-    0.6  0.5  0.4;
-    1.0  0.8  0.7
-]
-
-# Loss function: all buffers passed as arguments (not captured)
-function loss_with_buffers(
-    out::ChenSignatures.Tensor{Float64,3,3},
-    seg::ChenSignatures.Tensor{Float64,3,3},
-    tmp::ChenSignatures.Tensor{Float64,3,3},
-    Δ_vec::Vector{Float64},
-    path_matrix::Matrix{Float64},
-    endpoint::Vector{Float64}
-)
-    # Mutate path matrix
-    path_matrix[4, 1] = endpoint[1]
-    path_matrix[4, 2] = endpoint[2]
-    path_matrix[4, 3] = endpoint[3]
-    
-    # Compute signature using the mutating function
+# Inline version (Enzyme-compatible)
+function signature_enzyme_inline(path_matrix::Matrix{Float64}, m::Int)
+    D = size(path_matrix, 2)
+    M = m
     N = size(path_matrix, 1)
+    Δ = Vector{Float64}(undef, D)
     
-    # Initialize out
-    fill!(out.coeffs, 0.0)
-    out.coeffs[out.offsets[1] + 1] = 1.0
+    a = ChenSignatures.Tensor{Float64,D,M}()
+    b = ChenSignatures.Tensor{Float64,D,M}()
+    seg = ChenSignatures.Tensor{Float64,D,M}()
     
-    # First segment
     @inbounds for j in 1:D
-        Δ_vec[j] = path_matrix[2, j] - path_matrix[1, j]
+        Δ[j] = path_matrix[2, j] - path_matrix[1, j]
     end
-    ChenSignatures.non_generated_exp!(seg, Δ_vec)
+    ChenSignatures.non_generated_exp_vec!(a, Δ)
     
-    # Copy
-    @inbounds for i in eachindex(out.coeffs, seg.coeffs)
-        out.coeffs[i] = seg.coeffs[i]
-    end
-    
-    # Remaining segments
     @inbounds for i in 2:N-1
         for j in 1:D
-            Δ_vec[j] = path_matrix[i+1, j] - path_matrix[i, j]
+            Δ[j] = path_matrix[i+1, j] - path_matrix[i, j]
         end
         
-        ChenSignatures.non_generated_exp!(seg, Δ_vec)
-        ChenSignatures.non_generated_mul!(tmp, out, seg)
+        ChenSignatures.non_generated_exp_vec!(seg, Δ)
+        ChenSignatures.non_generated_mul!(b, a, seg)
         
-        for k in eachindex(out.coeffs, tmp.coeffs)
-            out.coeffs[k] = tmp.coeffs[k]
-        end
+        a, b = b, a
     end
     
-    return sum(out.coeffs)
+    return sum(ChenSignatures._flatten_tensor(a))
 end
 
-# Test forward pass
-endpoint = [1.0, 0.8, 0.7]
-result = loss_with_buffers(out, seg, tmp, Δ_vec, path_matrix, endpoint)
-println("Forward pass: $result")
+loss_enzyme(p) = signature_enzyme_inline(p, 3)
 
-# Test with Enzyme
-endpoint_test = [1.0, 0.8, 0.7]
-grad = zeros(3)
+println("\n=== Forward pass ===")
+println("enzyme: ", loss_enzyme(path))
 
-println("\nComputing gradient with Enzyme...")
-try
-    Enzyme.autodiff(
-        Reverse,
-        loss_with_buffers,
-        Active,
-        Duplicated(out, out_shadow),
-        Duplicated(seg, seg_shadow),
-        Duplicated(tmp, tmp_shadow),
-        Duplicated(Δ_vec, Δ_vec_shadow),
-        Const(path_matrix),  # Path matrix is Const
-        Duplicated(endpoint_test, grad)
-    )
-    
-    println("✅ Enzyme SUCCESS!")
-    println("   Gradient: $grad")
-    
-    # Verify with finite differences
-    println("\nVerifying with FiniteDifferences...")
-    
-    function loss_for_fd(ep)
-        loss_with_buffers(out, seg, tmp, Δ_vec, path_matrix, ep)
-    end
-    
-    fdm = central_fdm(5, 1)
-    grad_fd = FiniteDifferences.grad(fdm, loss_for_fd, endpoint)[1]
-    
-    println("   FiniteDiff: $grad_fd")
-    
-    err = maximum(abs.(grad .- grad_fd))
-    rel_err = err / maximum(abs.(grad_fd))
-    
-    println("\n   Abs Error: $err")
-    println("   Rel Error: $rel_err")
-    
-    if rel_err < 1e-5
-        println("\n🎉 PERFECT! Gradients match!")
-    else
-        println("\n⚠️ Gradients differ")
-    end
-    
-catch e
-    println("❌ FAILED")
-    showerror(stdout, e, catch_backtrace())
+println("\n=== Enzyme gradient ===")
+grad_enzyme = zeros(size(path))
+autodiff(Reverse, loss_enzyme, Active, Duplicated(path, grad_enzyme))
+display(grad_enzyme)
+
+println("\n\n=== Finite Differences ===")
+eps = 1e-6
+grad_fd = zeros(size(path))
+for i in 1:size(path, 1), j in 1:size(path, 2)
+    p_plus = copy(path)
+    p_plus[i, j] += eps
+    p_minus = copy(path)
+    p_minus[i, j] -= eps
+    grad_fd[i, j] = (loss_enzyme(p_plus) - loss_enzyme(p_minus)) / (2 * eps)
 end
+display(grad_fd)
+
+println("\n\n=== Comparison ===")
+println("Difference: ", norm(grad_enzyme - grad_fd))
+println("Relative error: ", norm(grad_enzyme - grad_fd) / norm(grad_fd))
+println("Match: ", isapprox(grad_enzyme, grad_fd, rtol=1e-4))
