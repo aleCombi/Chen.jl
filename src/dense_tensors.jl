@@ -181,77 +181,6 @@ end
 # 6. Kernels
 # -------------------------------------------------------------------
 
-@generated function update_signature_horner!(
-    A_tensor::Tensor{T,D,M}, 
-    z::SVector{D,T}, 
-    B1::AbstractVector{T},
-    B2::AbstractVector{T}
-) where {T,D,M}
-    off = level_starts0(D, M)
-    updates = Expr[]
-    for k in M:-1:2
-        ops = Expr[]
-        push!(ops, quote
-            inv_k = inv(T($k))
-            val_init = z * inv_k
-            unsafe_store!(Ptr{SVector{$D, T}}(pointer(B1)), val_init, 1)
-        end)
-        current_len = D 
-        for i in 1:(k-2)
-            next_scale = inv(T(k - i))
-            a_start = off[i+1]
-            src_buf = isodd(i) ? :B1 : :B2
-            dst_buf = isodd(i) ? :B2 : :B1
-            push!(ops, quote
-                len = $current_len
-                scale = $next_scale
-                ptr_src = pointer($src_buf); ptr_dst = pointer($dst_buf); ptr_coeffs = pointer(coeffs)
-                ptr_dst_sv = Ptr{SVector{$D, T}}(ptr_dst)
-                z_vec = z
-                for r in 1:len
-                    src_val = unsafe_load(ptr_src, r)
-                    coeff_val = unsafe_load(ptr_coeffs, $a_start + r)
-                    val = src_val + coeff_val
-                    res_vec = (val * scale) * z_vec
-                    unsafe_store!(ptr_dst_sv, res_vec, r)
-                end
-            end)
-            current_len *= D
-        end
-        last_iter_count = k - 2
-        final_src_buf = (last_iter_count > 0 && isodd(last_iter_count)) ? :B2 : :B1
-        prev_level_idx = k - 1
-        a_prev_start = off[prev_level_idx+1]
-        a_tgt_start  = off[k+1]
-        push!(ops, quote
-            len = $current_len
-            ptr_src = pointer($final_src_buf); ptr_coeffs = pointer(coeffs)
-            ptr_Ak_base = pointer(coeffs, $a_tgt_start + 1)
-            ptr_Ak_sv = Ptr{SVector{$D, T}}(ptr_Ak_base)
-            z_vec = z
-            for r in 1:len
-                src_val = unsafe_load(ptr_src, r)
-                coeff_val = unsafe_load(ptr_coeffs, $a_prev_start + r)
-                val = src_val + coeff_val
-                inc_vec = val * z_vec
-                unsafe_store!(ptr_Ak_sv, unsafe_load(ptr_Ak_sv, r) + inc_vec, r)
-            end
-        end)
-        push!(updates, Expr(:block, ops...))
-    end
-    push!(updates, quote
-        start_1 = $(off[2])
-        ptr_A1 = pointer(coeffs, start_1 + 1)
-        ptr_A1_sv = Ptr{SVector{$D, T}}(ptr_A1)
-        unsafe_store!(ptr_A1_sv, unsafe_load(ptr_A1_sv, 1) + z, 1)
-    end)
-    return quote
-        coeffs = A_tensor.coeffs
-        @inbounds begin; $(Expr(:block, updates...)); end
-        return nothing
-    end
-end
-
 @generated function exp!(out::Tensor{T,D,M}, x::SVector{D,T}) where {T,D,M}
     off = level_starts0(D, M)
     level_loops = Expr[]
@@ -281,7 +210,7 @@ end
     end
 end
 
-function update_signature_horner_enzyme!(
+function update_signature_horner!(
     A_tensor::Tensor{T,D,M}, 
     z::SVector{D,T},  # Changed to SVector
     B1::Vector{T},
