@@ -1,6 +1,30 @@
 using LinearAlgebra
 export sig, prepare, logsig, sig_enzyme
 
+function sig_on_the_fly(path_matrix::Matrix{T}, m::Int) where T
+    D = size(path_matrix, 2)
+    N = size(path_matrix, 1)
+    
+    # 1. Allocate buffers manually (Enzyme friendly-ish)
+    max_buffer_size = D^(m-1)
+    B1 = Vector{T}(undef, max_buffer_size)
+    B2 = Vector{T}(undef, max_buffer_size)
+    
+    # 2. Initialize Tensor
+    out = Tensor{T, D, m}()
+    
+    # 3. Loop: Create SVector on stack -> Call Kernel
+    @inbounds for i in 1:N-1
+        # Fix: Convert to SVector so it matches the kernel signature
+        z = SVector{D, T}(ntuple(j -> path_matrix[i+1, j] - path_matrix[i, j], D))
+        
+        # Call the existing optimized kernel from your library
+        ChenSignatures.update_signature_horner!(out, z, B1, B2)
+    end
+    
+    return ChenSignatures._flatten_tensor(out)
+end
+
 # --- 1. Signature (sig) ---
 function sig(path::AbstractMatrix{T}, m::Int) where T
     N, d = size(path)
