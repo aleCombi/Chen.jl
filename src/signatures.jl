@@ -1,68 +1,116 @@
-# ---------------- public API ----------------
+using LinearAlgebra
+using StaticArrays
 
-function signature_path(
-    ::Type{Tensor{T,D,M}},
-    path::Vector{SVector{D,T}},
-    m::Int,
-) where {T,D,M}
-    @assert m == M "Requested level m=$m does not match Type level M=$M"
-    out = Tensor{T,D,M}()
+export sig, prepare, logsig, signature_path
+
+"""
+    sig(path, m)
+
+Compute the truncated signature of the `path` (Matrix `N×D`) up to level `m`.
+Returns a flattened vector suitable for Python/NumPy integration.
+"""
+function sig(path::AbstractMatrix{T}, m::Int) where T
+    D = size(path, 2)
+    out = Tensor{T, D, m}()
+    signature_path!(out, path)
+    return _flatten_tensor(out)
+end
+
+struct BasisCache{T}
+    d::Int
+    m::Int
+    lynds::Vector{Word}
+    L::Matrix{T} 
+end
+
+"""
+    prepare(d, m)
+
+Precompute the Lyndon basis and projection matrix for dimension `d` and level `m`.
+Returns a `BasisCache` to be passed to `logsig`.
+"""
+function prepare(d::Int, m::Int)
+    lynds, L, _ = build_L(d, m)
+    return BasisCache(d, m, lynds, L)
+end
+
+"""
+    logsig(path, basis)
+
+Compute the log-signature of the `path` projected onto the Lyndon basis.
+Requires a precomputed `basis` from `prepare(d, m)`.
+"""
+function logsig(path::AbstractMatrix{T}, basis::BasisCache) where T
+    @assert size(path, 2) == basis.d "Dimension mismatch between path and basis"
+    
+    sig_tensor = Tensor{T, basis.d, basis.m}()
+    signature_path!(sig_tensor, path)
+    
+    log_tensor = ChenSignatures.log(sig_tensor)
+    return project_to_lyndon(log_tensor, basis.lynds, basis.L)
+end
+
+function signature_path(::Type{Tensor{T}}, path, m::Int) where T
+    D = _get_dim(path)
+    out = Tensor{T, D, m}()
     signature_path!(out, path)
     return out
 end
 
-function signature_path(::Type{Tensor{T}}, path::Vector{SVector{D,T}}, m::Int) where {T,D}
-    return _dispatch_sig(Tensor{T}, Val(D), Val(m), path)
-end
-function signature_path(::Type{Tensor{T,M}}, path::Vector{SVector{D,T}}, m::Int) where {T,D,M}
-    return _dispatch_sig(Tensor{T}, Val(D), Val(M), path)
-end
+_get_dim(path::AbstractMatrix) = size(path, 2)
+_get_dim(path::AbstractVector{SVector{D, T}}) where {D, T} = D
 
-@generated function _dispatch_sig(::Type{Tensor{T}}, ::Val{D}, ::Val{M}, path) where {T,D,M}
-    quote
-        out = Tensor{T,D,M}()
-        signature_path!(out, path)
-        return out
+function signature_path! end
+
+function signature_path!(out::Tensor{T,D,M}, path::AbstractMatrix{T}) where {T,D,M}
+    N = size(path, 1)
+    @assert N ≥ 2
+    
+    _reset_tensor!(out)
+    B1, B2 = _alloc_scratch(T, D, M)
+
+    @inbounds for i in 1:N-1
+        val = ntuple(j -> path[i+1, j] - path[i, j], Val(D))
+        z = SVector{D, T}(val)
+        update_signature_horner!(out, z, B1, B2)
     end
+    return out
 end
 
-"""
-    signature_path!(out, path)
-Computes path signature using Block-Optimized Horner's Method.
-"""
-function signature_path!(
-    out::Tensor{T,D,M},
-    path::Vector{SVector{D,T}},
-) where {T,D,M}
-    @assert length(path) ≥ 2
+function signature_path!(out::Tensor{T,D,M}, path::AbstractVector{SVector{D,T}}) where {T,D,M}
+    N = length(path)
+    @assert N ≥ 2
 
+    _reset_tensor!(out)
+    B1, B2 = _alloc_scratch(T, D, M)
+
+    @inbounds for i in 1:N-1
+        z = path[i+1] - path[i]
+        update_signature_horner!(out, z, B1, B2)
+    end
+    return out
+end
+
+@inline function _reset_tensor!(out::Tensor{T}) where T
     fill!(out.coeffs, zero(T))
     ChenSignatures._write_unit!(out)
-
-    # Scratch buffers for Ping-Pong
-    # Size: D^(M-1) floats
-    max_scratch_len = M > 1 ? D^(M-1) : 1
-    
-    B1 = Vector{T}(undef, max_scratch_len)
-    B2 = Vector{T}(undef, max_scratch_len)
-
-    @inbounds begin
-        for i in 1:length(path)-1
-            Δ = path[i+1] - path[i]
-            update_signature_horner!(out, Δ, B1, B2)
-        end
-    end
-
-    return out
 end
 
-function signature_path!(out::AT, path::Vector{SVector{D,T}}) where {D,T,AT<:AbstractTensor{T}}
-    @assert length(path) ≥ 2
-    a = out; b = similar(out); seg = similar(out)
-    Δ1 = path[2] - path[1]; exp!(a, Δ1)
-    for i in 2:length(path)-1
-        Δ = path[i+1] - path[i]; exp!(seg, Δ); mul!(b, a, seg); a, b = b, a
+@inline function _alloc_scratch(::Type{T}, D::Int, M::Int) where T
+    max_len = M > 1 ? D^(M-1) : 1
+    return Vector{T}(undef, max_len), Vector{T}(undef, max_len)
+end
+
+function _flatten_tensor(t::Tensor{T,D,M}) where {T,D,M}
+    total_len = t.offsets[end] - t.offsets[2] 
+    out = Vector{T}(undef, total_len)
+    
+    current_idx = 1
+    for k in 1:M
+        start_offset = t.offsets[k+1]
+        len = D^k
+        copyto!(out, current_idx, t.coeffs, start_offset + 1, len)
+        current_idx += len
     end
-    if a !== out; copy!(out, a); end
     return out
 end

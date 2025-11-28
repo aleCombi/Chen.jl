@@ -1,0 +1,54 @@
+name: Publish Python Package
+
+on:
+  push:
+    tags:
+      - 'v*'  # Triggers when TagBot creates a tag
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Extract version from Julia Project.toml
+        id: version
+        run: |
+          VERSION=$(grep -oP '^version = "\K[^"]+' Project.toml)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+      
+      - name: Update Python pyproject.toml
+        working-directory: python
+        run: |
+          sed -i 's/^version = ".*"/version = "${{ steps.version.outputs.version }}"/' pyproject.toml
+      
+      - name: Commit version sync
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add python/pyproject.toml
+          git commit -m "Sync Python version to ${{ steps.version.outputs.version }}"
+          git push origin HEAD:master
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install build tools
+        run: pip install build twine
+      
+      - name: Build package
+        working-directory: python
+        run: python -m build
+      
+      - name: Publish to PyPI
+        working-directory: python
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
+        run: twine upload dist/*
