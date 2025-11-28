@@ -1,18 +1,10 @@
 using StaticArrays
 using LoopVectorization: @avx, @turbo
 
-# -------------------------------------------------------------------
-# 1. Tensor Type Definition
-# -------------------------------------------------------------------
-
 struct Tensor{T,D,M} <: AbstractTensor{T}
     coeffs::Vector{T}
     offsets::Vector{Int}
 end
-
-# -------------------------------------------------------------------
-# 2. Basic Interface
-# -------------------------------------------------------------------
 
 dim(::Tensor{T,D,M}) where {T,D,M} = D
 level(::Tensor{T,D,M}) where {T,D,M} = M
@@ -29,13 +21,8 @@ Base.length(ts::Tensor) = length(ts.coeffs)
 Base.show(io::IO, ts::Tensor{T,D,M}) where {T,D,M} =
     print(io, "Tensor{T=$T, D=$D, M=$M}(length=$(length(ts.coeffs)))")
 
-# -------------------------------------------------------------------
-# 3. Constructors (FIXED: Uses zeros instead of undef)
-# -------------------------------------------------------------------
-
 function Tensor{T,D,M}() where {T,D,M}
     offsets = level_starts0(D, M)
-    # FIX: Initialize with zeros to ensure padding is clean
     coeffs  = zeros(T, offsets[end]) 
     return Tensor{T,D,M}(coeffs, offsets)
 end
@@ -44,16 +31,6 @@ function Tensor{T,D,M}(coeffs::Vector{T}) where {T,D,M}
     offsets = level_starts0(D, M)
     @assert length(coeffs) == offsets[end] "Coefficient length mismatch"
     return Tensor{T,D,M}(coeffs, offsets)
-end
-
-function Tensor(coeffs::Vector{T}, d::Int, m::Int) where {T}
-    return _make_tensor(coeffs, Val(d), Val(m))
-end
-
-@generated function _make_tensor(coeffs::Vector{T}, ::Val{D}, ::Val{M}) where {T,D,M}
-    quote
-        return Tensor{T,D,M}(coeffs)
-    end
 end
 
 Base.similar(ts::Tensor{T,D,M}) where {T,D,M} = Tensor{T,D,M}()
@@ -67,10 +44,6 @@ function Base.copy!(dest::Tensor{T,D,M}, src::Tensor{T,D,M}) where {T,D,M}
     return dest
 end
 
-# -------------------------------------------------------------------
-# 4. Helpers
-# -------------------------------------------------------------------
-
 @inline function level_starts0(d::Int, m::Int)
     offsets = Vector{Int}(undef, m + 2)
     offsets[1] = 0
@@ -79,7 +52,6 @@ end
         offsets[k+1] = offsets[k] + len
         len *= d
     end
-    # Padding logic for SIMD alignment
     W = 8 
     pad = (W - (offsets[2] % W)) % W
     if pad != 0
@@ -99,10 +71,6 @@ end
     t.coeffs[t.offsets[1] + 1] = one(T)
     return t
 end
-
-# -------------------------------------------------------------------
-# 5. Arithmetic Operations
-# -------------------------------------------------------------------
 
 @inline function add_scaled!(dest::Tensor{T,D,M}, src::Tensor{T,D,M}, α::T) where {T,D,M}
     @inbounds @turbo for i in eachindex(dest.coeffs, src.coeffs)
@@ -154,8 +122,6 @@ end
     end
 end
 
-# src/dense_tensors.jl
-
 function log!(out::Tensor{T,D,M}, g::Tensor{T,D,M}) where {T,D,M}
     i0 = out.offsets[1] + 1
     X = similar(out); copy!(X, g); X.coeffs[i0] -= one(T)
@@ -176,10 +142,6 @@ function log(g::Tensor{T,D,M}) where {T,D,M}
     out = similar(g)
     return log!(out, g)
 end
-
-# -------------------------------------------------------------------
-# 6. Kernels
-# -------------------------------------------------------------------
 
 @generated function exp!(out::Tensor{T,D,M}, x::SVector{D,T}) where {T,D,M}
     off = level_starts0(D, M)
@@ -212,7 +174,7 @@ end
 
 function update_signature_horner!(
     A_tensor::Tensor{T,D,M}, 
-    z::SVector{D,T},  # Changed to SVector
+    z::SVector{D,T}, 
     B1::Vector{T},
     B2::Vector{T}
 ) where {T,D,M}
@@ -220,34 +182,27 @@ function update_signature_horner!(
     off = level_starts0(D, M)
     
     @inbounds begin
-        # Process levels k = M down to 2
         for k in M:-1:2
             inv_k = inv(T(k))
-            
-            # Initialize B1 with z * inv_k
             for d in 1:D
                 B1[d] = z[d] * inv_k
             end
             
             current_len = D
             
-            # Inner iterations for level k
             for i in 1:(k-2)
                 next_scale = inv(T(k - i))
                 a_start = off[i+1]
                 
-                # Determine source and destination buffers
                 src_buf = isodd(i) ? B1 : B2
                 dst_buf = isodd(i) ? B2 : B1
                 
-                # Process all entries at this step
                 for r in 1:current_len
                     src_val = src_buf[r]
                     coeff_val = coeffs[a_start + r]
                     val = src_val + coeff_val
                     scaled_val = val * next_scale
                     
-                    # Compute res_vec = scaled_val * z (element-wise into D slots)
                     base_idx = (r - 1) * D
                     for d in 1:D
                         dst_buf[base_idx + d] = scaled_val * z[d]
@@ -257,7 +212,6 @@ function update_signature_horner!(
                 current_len *= D
             end
             
-            # Final update for level k
             last_iter_count = k - 2
             final_src_buf = (last_iter_count > 0 && isodd(last_iter_count)) ? B2 : B1
             
@@ -269,7 +223,6 @@ function update_signature_horner!(
                 coeff_val = coeffs[a_prev_start + r]
                 val = src_val + coeff_val
                 
-                # Update level k coefficients: inc_vec = val * z
                 base_idx = (r - 1) * D
                 for d in 1:D
                     coeffs[a_tgt_start + base_idx + d] += val * z[d]
@@ -277,12 +230,10 @@ function update_signature_horner!(
             end
         end
         
-        # Update level 1
         start_1 = off[2]
         for d in 1:D
             coeffs[start_1 + d] += z[d]
         end
     end
-    
     return nothing
 end
