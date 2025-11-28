@@ -1,7 +1,18 @@
 from pathlib import Path
 import numpy as np
 from juliacall import Main as jl
+from pathlib import Path
+import re
 
+def _get_julia_version():
+    """Read version from Julia's Project.toml"""
+    project_toml = Path(__file__).parent.parent.parent / "Project.toml"
+    if not project_toml.exists():
+        return None
+    
+    content = project_toml.read_text()
+    match = re.search(r'^version\s*=\s*"([^"]+)"', content, re.MULTILINE)
+    return match.group(1) if match else None
 
 def _find_local_project():
     """
@@ -22,17 +33,10 @@ def _find_local_project():
 
 
 def _ensure_chen_loaded():
-    """
-    Ensure the Julia backend (ChenSignatures.jl) is installed and loaded.
-
-    - Local dev: use Pkg.develop on the repository root.
-    - PyPI install: prefer registered package `ChenSignatures`, and
-      fall back to adding from GitHub if needed.
-    """
     local = _find_local_project()
 
     if local is not None:
-        # Local development: use your local Julia project
+        # Local development
         proj = local.as_posix()
         jl.seval(f"""
             import Pkg
@@ -41,25 +45,24 @@ def _ensure_chen_loaded():
             end
         """)
     else:
-        # Installed-from-PyPI mode
-        jl.seval(r"""
-            import Pkg
-            if !haskey(Pkg.project().dependencies, "ChenSignatures")
-                try
-                    # Prefer registered package
-                    Pkg.add("ChenSignatures")
-                catch err
-                    @warn "Pkg.add(\"ChenSignatures\") failed, falling back to GitHub url" err
-                    Pkg.add(Pkg.PackageSpec(
-                        url = "https://github.com/aleCombi/ChenSignatures.jl",
-                    ))
+        # Installed: pin to version from Julia Project.toml
+        version = _get_julia_version()
+        if version:
+            jl.seval(f"""
+                import Pkg
+                if !haskey(Pkg.project().dependencies, "ChenSignatures")
+                    Pkg.add(name="ChenSignatures", version="{version}")
                 end
-            end
-        """)
+            """)
+        else:
+            jl.seval(r"""
+                import Pkg
+                if !haskey(Pkg.project().dependencies, "ChenSignatures")
+                    Pkg.add("ChenSignatures")
+                end
+            """)
 
-    # Load the Julia module
     jl.seval("using ChenSignatures")
-
 
 # Initialize Julia environment on import
 _ensure_chen_loaded()
@@ -72,14 +75,16 @@ def sig(path, m: int) -> np.ndarray:
     Args:
         path: (N, d) array-like input
         m: truncation level
+        use_enzyme: If True, use Enzyme-compatible implementation (slower but differentiable).
+                    Default is False (uses optimized implementation).
 
     Returns:
         (d + d^2 + ... + d^m,) flattened array
     """
-    arr = np.ascontiguousarray(path)
+    arr = np.ascontiguousarray(path, dtype=np.float64)
     res = jl.ChenSignatures.sig(arr, m)
+    
     return np.asarray(res)
-
 
 def logsig(path, m: int) -> np.ndarray:
     """

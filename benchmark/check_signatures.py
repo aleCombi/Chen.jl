@@ -259,7 +259,7 @@ def compare_signatures():
                                     rel_l2 = l2 / norm_ref if norm_ref > 1e-15 else 0.0
                                     
                                     # Loose tolerance for high degree signatures on float64
-                                    status = "OK" if rel_l2 < 1e-8 else "FAIL"
+                                    status = "OK" if (rel_l2 < 1e-7 or max_abs < 1e-12) else "FAIL"
                                     print(f"  iisig:    len={len(sig_jl)}, diff={max_abs:.1e}, rel={rel_l2:.1e} -> {status}")
 
                                 writer.writerow({

@@ -1,12 +1,9 @@
-# --- Dense → Sparse ---
-# We extend the imported SparseTensor function
-# FIXED: Qualify with Algebra. to silence the extension warning
-function Algebra.SparseTensor(t::Tensor{T,D,M}) where {T,D,M}
+function SparseTensor(t::Tensor{T,D,M}) where {T,D,M}
     s = t.offsets
     coeffs = Dict{Word, T}()
     
     c0 = t.coeffs[s[1]+1]
-    if !iszero(c0); coeffs[Word()] = c0; end
+    !iszero(c0) && (coeffs[Word()] = c0)
     
     len = 1
     @inbounds for k in 1:M
@@ -15,10 +12,10 @@ function Algebra.SparseTensor(t::Tensor{T,D,M}) where {T,D,M}
         for p in 1:len
             c = t.coeffs[start + p - 1]
             if !iszero(c)
-                rem  = p - 1
+                rem = p - 1
                 idxs = Vector{Int}(undef, k)
                 base = (D == 1 ? 1 : div(len, D))
-                @inbounds for j in 1:k
+                for j in 1:k
                     q, rem = divrem(rem, base)
                     idxs[j] = q + 1
                     base = (D == 1 ? 1 : div(base, D))
@@ -30,31 +27,25 @@ function Algebra.SparseTensor(t::Tensor{T,D,M}) where {T,D,M}
     return SparseTensor{T}(coeffs, D, M)
 end
 
-# --- Sparse → Dense ---
-# We extend the ChenSignatures.Tensor function
 function Tensor(t::SparseTensor{T}) where {T}
     return _sparse_to_dense(t, Val(t.dim), Val(t.level))
 end
 
-@generated function _sparse_to_dense(t::SparseTensor{T}, ::Val{D}, ::Val{M}) where {T,D,M}
-    quote
-        out = Tensor{T,D,M}()
-        fill!(out.coeffs, zero(T))
-        s = out.offsets
-
-        @inbounds for (w, c) in t.coeffs
-            k = length(w)
-            if k == 0
-                out.coeffs[s[1] + 1] = c
-            else
-                posm1 = 0
-                @inbounds for j in 1:k
-                    posm1 = posm1 * $D + (w.indices[j] - 1)
-                end
-                idx = s[k + 1] + posm1 + 1
-                out.coeffs[idx] = c
+function _sparse_to_dense(t::SparseTensor{T}, ::Val{D}, ::Val{M}) where {T,D,M}
+    out = Tensor{T,D,M}()
+    s = out.offsets
+    
+    for (w, c) in t.coeffs
+        k = length(w)
+        if k == 0
+            out.coeffs[s[1] + 1] = c
+        elseif k <= M
+            pos = 0
+            for j in 1:k
+                pos = pos * D + (w.indices[j] - 1)
             end
+            out.coeffs[s[k+1] + pos + 1] = c
         end
-        return out
     end
+    return out
 end

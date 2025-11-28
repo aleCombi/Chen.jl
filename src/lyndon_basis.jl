@@ -46,7 +46,6 @@ function _longest_lyndon_suffix(w::Word, lynds::Vector{Word})
     error("No Lyndon suffix for $w")
 end
 
-# FIXED: Use D from type
 @inline function _coeff_of_word(t::Tensor{T,D,M}, w::Word) where {T,D,M}
     k = length(w)
     if k > M; return zero(T); end
@@ -89,7 +88,6 @@ function build_L(d::Int, N::Int; T=Float64)
     return lynds, L, Φcache
 end
 
-# FIXED: Allow T1 and T2 to differ (e.g. Float32 tensor, Float64 matrix)
 function project_to_lyndon(u_dense::Tensor{T1}, lynds::Vector{Word}, L::Matrix{T2}) where {T1,T2}
     T = promote_type(T1, T2)
     m = length(lynds)
