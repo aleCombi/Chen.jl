@@ -4,30 +4,21 @@ using Enzyme
 using ForwardDiff
 using LinearAlgebra
 
-@testset "sig_enzyme - Comprehensive Gradient Tests" begin
+@testset "sig - Comprehensive Gradient Tests" begin
     
     @testset "Basic functionality" begin
         path = [0.0 0.0; 1.0 1.0; 2.0 3.0]
         
-        result = sig_enzyme(path, 3)
+        result = sig(path, 3)
         @test result isa Vector{Float64}
         @test length(result) == 2 + 4 + 8  # d^1 + d^2 + d^3 for d=2, m=3
         @test all(isfinite, result)
     end
     
-    @testset "Matches sig output" begin
-        path = randn(5, 2)
-        
-        result_sig = sig(path, 3)
-        result_enzyme = sig_enzyme(path, 3)
-        
-        @test isapprox(result_sig, result_enzyme, rtol=1e-10)
-    end
-    
     @testset "Enzyme vs Finite Differences - sum loss" begin
         path = randn(4, 2)
         
-        loss(p) = sum(sig_enzyme(p, 3))
+        loss(p) = sum(sig(p, 3))
         
         # Enzyme gradient
         grad_enzyme = zeros(size(path))
@@ -49,7 +40,7 @@ using LinearAlgebra
         path = randn(4, 2)
         
         # Loss: just the 5th coefficient
-        loss(p) = sig_enzyme(p, 3)[5]
+        loss(p) = sig(p, 3)[5]
         
         grad_enzyme = zeros(size(path))
         autodiff(Reverse, loss, Active, Duplicated(path, grad_enzyme))
@@ -69,7 +60,7 @@ using LinearAlgebra
     @testset "Enzyme vs Finite Differences - L2 norm loss" begin
         path = randn(4, 2)
         
-        loss(p) = sum(abs2, sig_enzyme(p, 3))
+        loss(p) = sum(abs2, sig(p, 3))
         
         grad_enzyme = zeros(size(path))
         autodiff(Reverse, loss, Active, Duplicated(path, grad_enzyme))
@@ -90,11 +81,11 @@ using LinearAlgebra
         path = randn(4, 2)
         
         # Can't differentiate sig directly (has SVector, generated functions)
-        # But can verify sig_enzyme gives same forward pass
-        @test isapprox(sig(path, 3), sig_enzyme(path, 3), rtol=1e-10)
+        # But can verify sig gives same forward pass
+        @test isapprox(sig(path, 3), sig(path, 3), rtol=1e-10)
         
-        # And Enzyme works on sig_enzyme
-        loss(p) = sum(sig_enzyme(p, 3))
+        # And Enzyme works on sig
+        loss(p) = sum(sig(p, 3))
         grad = zeros(size(path))
         autodiff(Reverse, loss, Active, Duplicated(path, grad))
         @test all(isfinite, grad)
@@ -103,12 +94,12 @@ using LinearAlgebra
     @testset "Different dimensions" begin
         # 3D path
         path_3d = randn(4, 3)
-        result = sig_enzyme(path_3d, 3)
+        result = sig(path_3d, 3)
         @test length(result) == 3 + 9 + 27  # d^1 + d^2 + d^3 for d=3, m=3
         @test isapprox(sig(path_3d, 3), result, rtol=1e-10)
         
         # Gradient test
-        loss(p) = sum(sig_enzyme(p, 3))
+        loss(p) = sum(sig(p, 3))
         grad = zeros(size(path_3d))
         autodiff(Reverse, loss, Active, Duplicated(path_3d, grad))
         
@@ -125,7 +116,7 @@ using LinearAlgebra
     @testset "Longer paths" begin
         path = randn(20, 2)
         
-        loss(p) = sum(sig_enzyme(p, 3))
+        loss(p) = sum(sig(p, 3))
         grad = zeros(size(path))
         autodiff(Reverse, loss, Active, Duplicated(path, grad))
         

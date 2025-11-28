@@ -27,9 +27,6 @@ include("conversions.jl")
 # 6. Path Signature Logic
 include("signatures.jl")
 
-# 7. High-level User API
-include("api.jl")
-
 export sig, logsig, prepare
 export Tensor, signature_path
 

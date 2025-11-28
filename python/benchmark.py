@@ -36,19 +36,6 @@ t_chen = min(times) * 1000
 
 print(f"chen (optimized):     {t_chen:.1f} ms")
 
-# --- 2. ChenSignatures (Enzyme-compatible) ---
-# Warmup
-_ = chen.sig_enzyme(path, m)
-
-times = []
-for _ in range(20):
-    t0 = time.perf_counter()
-    chen.sig_enzyme(path, m)
-    times.append(time.perf_counter() - t0)
-t_chen_enzyme = min(times) * 1000
-
-print(f"chen (enzyme):        {t_chen_enzyme:.1f} ms  (Slowdown: {t_chen_enzyme/t_chen:.2f}x)")
-
 # --- 3. iisignature ---
 if HAS_IISIG:
     # Warmup

@@ -68,7 +68,7 @@ def _ensure_chen_loaded():
 _ensure_chen_loaded()
 
 
-def sig(path, m: int, *, use_enzyme: bool = False) -> np.ndarray:
+def sig(path, m: int) -> np.ndarray:
     """
     Compute the truncated signature of the path up to level m.
 
@@ -82,33 +82,8 @@ def sig(path, m: int, *, use_enzyme: bool = False) -> np.ndarray:
         (d + d^2 + ... + d^m,) flattened array
     """
     arr = np.ascontiguousarray(path, dtype=np.float64)
+    res = jl.ChenSignatures.sig(arr, m)
     
-    if use_enzyme:
-        res = jl.ChenSignatures.sig_enzyme_horner(arr, m)
-    else:
-        res = jl.ChenSignatures.sig(arr, m)
-    
-    return np.asarray(res)
-
-
-def sig_enzyme(path, m: int) -> np.ndarray:
-    """
-    Compute signature using Enzyme-compatible implementation.
-    
-    This version is differentiable with Enzyme.jl but may be slower than sig().
-    Use this when you need to compute gradients with Enzyme.
-
-    Args:
-        path: (N, d) array-like input (must be float64)
-        m: truncation level
-
-    Returns:
-        (d + d^2 + ... + d^m,) flattened array
-    """
-    arr = np.ascontiguousarray(path, dtype=np.float64)
-    # Explicitly convert to Julia Matrix to avoid PyArray wrapper issues
-    julia_matrix = jl.Matrix(arr)
-    res = jl.ChenSignatures.sig_enzyme_horner(julia_matrix, m)
     return np.asarray(res)
 
 def logsig(path, m: int) -> np.ndarray:
