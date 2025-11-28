@@ -426,3 +426,80 @@ end
     
     return nothing
 end
+
+function update_signature_horner_enzyme!(
+    A_tensor::Tensor{T,D,M}, 
+    z::Vector{T},
+    B1::Vector{T},
+    B2::Vector{T}
+) where {T,D,M}
+    coeffs = A_tensor.coeffs
+    off = level_starts0(D, M)
+    
+    @inbounds begin
+        # Process levels k = M down to 2
+        for k in M:-1:2
+            inv_k = inv(T(k))
+            
+            # Initialize B1 with z * inv_k
+            for d in 1:D
+                B1[d] = z[d] * inv_k
+            end
+            
+            current_len = D
+            
+            # Inner iterations for level k
+            for i in 1:(k-2)
+                next_scale = inv(T(k - i))
+                a_start = off[i+1]
+                
+                # Determine source and destination buffers
+                src_buf = isodd(i) ? B1 : B2
+                dst_buf = isodd(i) ? B2 : B1
+                
+                # Process all entries at this step
+                for r in 1:current_len
+                    src_val = src_buf[r]
+                    coeff_val = coeffs[a_start + r]
+                    val = src_val + coeff_val
+                    scaled_val = val * next_scale
+                    
+                    # Compute res_vec = scaled_val * z (element-wise into D slots)
+                    base_idx = (r - 1) * D
+                    for d in 1:D
+                        dst_buf[base_idx + d] = scaled_val * z[d]
+                    end
+                end
+                
+                current_len *= D
+            end
+            
+            # Final update for level k
+            last_iter_count = k - 2
+            final_src_buf = (last_iter_count > 0 && isodd(last_iter_count)) ? B2 : B1
+            
+            a_prev_start = off[k-1+1]
+            a_tgt_start = off[k+1]
+            
+            for r in 1:current_len
+                src_val = final_src_buf[r]
+                coeff_val = coeffs[a_prev_start + r]
+                val = src_val + coeff_val
+                
+                # Update level k coefficients: inc_vec = val * z
+                base_idx = (r - 1) * D
+                for d in 1:D
+                    coeffs[a_tgt_start + base_idx + d] += val * z[d]
+                end
+            end
+        end
+        
+        # Update level 1
+        start_1 = off[2]
+        for d in 1:D
+            coeffs[start_1 + d] += z[d]
+        end
+    end
+    
+    return nothing
+end
