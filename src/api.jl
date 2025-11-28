@@ -1,5 +1,5 @@
 using LinearAlgebra
-export sig, prepare, logsig
+export sig, prepare, logsig, sig_enzyme
 
 # --- 1. Signature (sig) ---
 function sig(path::AbstractMatrix{T}, m::Int) where T
@@ -10,6 +10,55 @@ function sig(path::AbstractMatrix{T}, m::Int) where T
     tensor = signature_path(Tensor{T}, sv_path, m)
     
     return _flatten_tensor(tensor)
+end
+
+function sig_enzyme(path::Matrix{Float64}, m::Int)
+    D = size(path, 2)
+    
+    # Dispatch to specialized implementation based on D and m
+    if D == 2 && m == 3
+        return _sig_enzyme_impl(path, Val(2), Val(3))
+    elseif D == 2 && m == 4
+        return _sig_enzyme_impl(path, Val(2), Val(4))
+    elseif D == 3 && m == 3
+        return _sig_enzyme_impl(path, Val(3), Val(3))
+    elseif D == 3 && m == 4
+        return _sig_enzyme_impl(path, Val(3), Val(4))
+    else
+        error("Unsupported combination: D=$D, m=$m. Add more dispatch cases as needed.")
+    end
+end
+
+# In src/api.jl, update _sig_enzyme_impl:
+
+function _sig_enzyme_impl(path_matrix::Matrix{Float64}, ::Val{D}, ::Val{M}) where {D,M}
+    N = size(path_matrix, 1)
+    Δ = Vector{Float64}(undef, D)
+    
+    a = Tensor{Float64,D,M}()
+    b = Tensor{Float64,D,M}()
+    seg = Tensor{Float64,D,M}()
+    
+    # First segment
+    @inbounds for j in 1:D
+        Δ[j] = path_matrix[2, j] - path_matrix[1, j]
+    end
+    non_generated_exp_vec!(a, Δ)
+    
+    # Remaining segments
+    @inbounds for i in 2:N-1
+        for j in 1:D
+            Δ[j] = path_matrix[i+1, j] - path_matrix[i, j]
+        end
+        
+        non_generated_exp_vec!(seg, Δ)
+        non_generated_mul!(b, a, seg)
+        
+        a, b = b, a
+    end
+    
+    # Return sum (what worked)
+    return sum(a.coeffs)
 end
 
 # --- 2. Preparation (prepare) ---
