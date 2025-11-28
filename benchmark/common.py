@@ -3,8 +3,11 @@
 
 import ast
 import math
+import json
+import shutil
 from pathlib import Path
 from typing import Dict, List, Any
+from datetime import datetime
 
 import numpy as np
 
@@ -106,3 +109,82 @@ def make_path(d: int, N: int, kind: str) -> np.ndarray:
         return make_path_sin(d, N)
     else:
         raise ValueError(f"Unknown path_kind: {kind}")
+
+# -------- Run Folder Management --------
+
+def setup_run_folder(run_type: str, cfg: Dict[str, Any]) -> Path:
+    """
+    Create a timestamped run folder with standardized structure.
+    
+    Args:
+        run_type: One of 'benchmark_julia', 'benchmark_python', 
+                  'benchmark_comparison', 'signature_check'
+        cfg: Configuration dictionary
+    
+    Returns:
+        Path to the created run folder
+    """
+    runs_root = SCRIPT_DIR / cfg.get("runs_dir", "runs")
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_dir = runs_root / f"{run_type}_{ts}"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Copy config snapshot
+    if CONFIG_PATH.exists():
+        shutil.copy2(CONFIG_PATH, run_dir / "benchmark_config.yaml")
+    
+    # Write resolved config
+    config_path = run_dir / "config_resolved.json"
+    with config_path.open("w", encoding="utf-8") as f:
+        json.dump(cfg, f, indent=2)
+    
+    # Create metadata
+    metadata = {
+        "run_type": run_type,
+        "timestamp": ts,
+        "start_time": datetime.now().isoformat(),
+    }
+    metadata_path = run_dir / "run_metadata.json"
+    with metadata_path.open("w", encoding="utf-8") as f:
+        json.dump(metadata, f, indent=2)
+    
+    print(f"Created run folder: {run_dir}")
+    return run_dir
+
+def finalize_run_folder(run_dir: Path, summary: Dict[str, Any]):
+    """
+    Write summary and completion metadata to run folder.
+    
+    Args:
+        run_dir: Path to run folder
+        summary: Dictionary with summary information
+    """
+    # Update metadata with end time
+    metadata_path = run_dir / "run_metadata.json"
+    if metadata_path.exists():
+        with metadata_path.open("r", encoding="utf-8") as f:
+            metadata = json.load(f)
+    else:
+        metadata = {}
+    
+    metadata["end_time"] = datetime.now().isoformat()
+    metadata["summary"] = summary
+    
+    with metadata_path.open("w", encoding="utf-8") as f:
+        json.dump(metadata, f, indent=2)
+    
+    # Write human-readable summary
+    summary_path = run_dir / "SUMMARY.txt"
+    with summary_path.open("w", encoding="utf-8") as f:
+        f.write(f"Benchmark Run Summary\n")
+        f.write(f"{'=' * 60}\n\n")
+        f.write(f"Run Type: {metadata.get('run_type', 'unknown')}\n")
+        f.write(f"Start:    {metadata.get('start_time', 'unknown')}\n")
+        f.write(f"End:      {metadata.get('end_time', 'unknown')}\n\n")
+        
+        f.write(f"Results:\n")
+        f.write(f"{'-' * 60}\n")
+        for key, value in summary.items():
+            f.write(f"{key}: {value}\n")
+    
+    print(f"Run completed. Summary written to: {summary_path}")

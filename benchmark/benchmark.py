@@ -162,31 +162,38 @@ def run_bench():
     Ds = cfg["Ds"]
     Ms = cfg["Ms"]
     path_kind = cfg["path_kind"]
-    runs_dir = cfg["runs_dir"]
     repeats = cfg["repeats"]
     logsig_method = cfg["logsig_method"]
     operations = cfg["operations"]
 
-    print("Running Python benchmark suite with config:")
+    print("=" * 60)
+    print("Python Benchmark Suite")
+    print("=" * 60)
+    print(f"Configuration:")
     print(f"  path_kind     = {path_kind}")
     print(f"  Ns            = {Ns}")
     print(f"  Ds            = {Ds}")
     print(f"  Ms            = {Ms}")
     print(f"  operations    = {operations}")
-    print(f"  runs_dir      = \"{runs_dir}\"")
     print(f"  repeats       = {repeats}")
-    print(f"  logsig_method = \"{logsig_method}\" (iisignature only)")
+    print(f"  logsig_method = {logsig_method} (iisignature only)")
     print(f"  iisignature   = {'available' if HAS_IISIG else 'NOT AVAILABLE'}")
     print(f"  pysiglib      = {'available' if HAS_PYSIGLIB else 'NOT AVAILABLE'}")
+    print()
 
-    # If BENCHMARK_RUN_DIR is set, we write everything there.
-    env_run_dir = os.environ.get("BENCHMARK_RUN_DIR")
-    if env_run_dir:
-        runs_path = Path(env_run_dir)
+    # Check if orchestrator is overriding output location
+    env_out_csv = os.environ.get("BENCHMARK_OUT_CSV", "")
+    if env_out_csv:
+        # Orchestrator mode: write to specified location
+        csv_path = Path(env_out_csv)
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
+        print(f"Orchestrator mode: writing to {csv_path}")
+        run_dir = None
     else:
-        runs_path = SCRIPT_DIR / runs_dir
-
-    runs_path.mkdir(parents=True, exist_ok=True)
+        # Standalone mode: create own run folder
+        from common import setup_run_folder, finalize_run_folder
+        run_dir = setup_run_folder("benchmark_python", cfg)
+        csv_path = run_dir / "results.csv"
 
     results = []
 
@@ -207,9 +214,6 @@ def run_bench():
                         if res is not None:
                             results.append(res)
 
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    csv_path = runs_path / f"run_python_{ts}.csv"
-
     fieldnames = ["N", "d", "m", "path_kind", "operation", "language", "library", "method", "path_type", "t_ms", "alloc_KiB"]
     with csv_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -218,7 +222,19 @@ def run_bench():
             writer.writerow(row)
 
     print("=" * 60)
-    print(f"Benchmark grid written to: {csv_path}")
+    print(f"Results written to: {csv_path}")
+    
+    # Only write summary in standalone mode
+    if run_dir is not None:
+        summary = {
+            "total_benchmarks": len(results),
+            "libraries": list(set(r["library"] for r in results)),
+            "operations": list(set(r["operation"] for r in results)),
+            "output_csv": str(csv_path.name),
+        }
+        
+        finalize_run_folder(run_dir, summary)
+    
     return csv_path
 
 if __name__ == "__main__":
