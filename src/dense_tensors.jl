@@ -71,7 +71,7 @@ end
 # 4. Helpers
 # -------------------------------------------------------------------
 
-function level_starts0(d::Int, m::Int)
+@inline function level_starts0(d::Int, m::Int)
     offsets = Vector{Int}(undef, m + 2)
     offsets[1] = 0
     len = 1
@@ -152,6 +152,81 @@ end
         @inbounds begin; $(Expr(:block, level_blocks...)); end
         return out_tensor
     end
+end
+
+# src/dense_tensors.jl
+
+# Non-generated version of mul! for Enzyme compatibility
+@inline function non_generated_mul!(
+    out_tensor::Tensor{T,D,M}, 
+    x1_tensor::Tensor{T,D,M}, 
+    x2_tensor::Tensor{T,D,M}
+) where {T,D,M}
+    
+    off = level_starts0(D, M)
+    out = out_tensor.coeffs
+    x1 = x1_tensor.coeffs
+    x2 = x2_tensor.coeffs
+    
+    # Level 0: scalar multiplication
+    a0 = x1[off[1] + 1]
+    b0 = x2[off[1] + 1]
+    out[off[1] + 1] = a0 * b0
+    
+    # Levels 1..M
+    @inbounds for k in 1:M
+        out_len = D^k
+        out_s = off[k+1] + 1
+        
+        # Initialize: out_k = a0 * x2_k
+        if a0 == one(T)
+            for j in 0:(out_len-1)
+                out[out_s + j] = x2[out_s + j]
+            end
+        elseif a0 == zero(T)
+            for j in 0:(out_len-1)
+                out[out_s + j] = zero(T)
+            end
+        else
+            for j in 0:(out_len-1)
+                out[out_s + j] = a0 * x2[out_s + j]
+            end
+        end
+        
+        # Add cross terms: x1[level i] ⊗ x2[level k-i] for i=1..k-1
+        a_len = D
+        for i in 1:(k-1)
+            b_len = D^(k-i)
+            a_s = off[i+1] + 1
+            b_s = off[k-i+1] + 1
+            
+            for ai in 0:(a_len-1)
+                val_a = x1[a_s + ai]
+                row = out_s + ai * b_len
+                
+                for bi in 0:(b_len-1)
+                    out[row + bi] += val_a * x2[b_s + bi]
+                end
+            end
+            
+            a_len *= D
+        end
+        
+        # Add b0 * x1_k
+        if b0 != zero(T)
+            if b0 == one(T)
+                for j in 0:(out_len-1)
+                    out[out_s + j] += x1[out_s + j]
+                end
+            else
+                for j in 0:(out_len-1)
+                    out[out_s + j] += b0 * x1[out_s + j]
+                end
+            end
+        end
+    end
+    
+    return out_tensor
 end
 
 function log!(out::Tensor{T,D,M}, g::Tensor{T,D,M}) where {T,D,M}
@@ -277,4 +352,50 @@ end
         @inbounds begin; $(Expr(:block, level_loops...)); end
         return nothing
     end
+end
+
+# Add to src/dense_tensors.jl
+
+# Enzyme-friendly version: accepts Vector, D and M from type parameters
+@inline function non_generated_exp!(out::Tensor{T,D,M}, x::AbstractVector{T}) where {T,D,M}
+    # @assert lensgth(x) == D "Input vector must have length D=$D"
+    
+    off = level_starts0(D, M)
+    coeffs = out.coeffs
+    
+    # Level 0: constant = 1
+    coeffs[off[1] + 1] = one(T)
+    
+    # Level 1: copy x
+    s1 = off[2] + 1
+    @inbounds for i in 1:D
+        coeffs[s1 + i - 1] = x[i]
+    end
+    
+    # Levels 2..M: recurrence
+    @inbounds for k in 2:M
+        scale = inv(T(k))
+        prev_len = D^(k-1)
+        prev_s = off[k] + 1
+        cur_s = off[k+1] + 1
+        
+        for i in 1:D
+            val = scale * x[i]
+            dest = cur_s + (i - 1) * prev_len
+            
+            for j in 0:(prev_len - 1)
+                coeffs[dest + j] = val * coeffs[prev_s + j]
+            end
+        end
+    end
+    
+    return nothing
+end
+
+# Convenience wrapper: still accepts SVector for nice user API
+@inline function non_generated_exp!(out::Tensor{T,D,M}, x::SVector{D,T}) where {T,D,M}
+    # Convert to Vector outside the differentiated region
+    x_vec = Vector{T}(x)
+    non_generated_exp!(out, x_vec)
+    return nothing
 end

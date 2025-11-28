@@ -66,3 +66,82 @@ function signature_path!(out::AT, path::Vector{SVector{D,T}}) where {D,T,AT<:Abs
     if a !== out; copy!(out, a); end
     return out
 end
+
+# src/signatures.jl
+
+# src/signatures.jl
+
+# src/signatures.jl or src/api.jl
+
+# src/signatures.jl or wherever you put signature_from_matrix
+
+# src/signatures.jl
+
+"""
+    signature_from_matrix!(out, seg, tmp, Δ_vec, path_matrix, m)
+    
+Enzyme-compatible: All buffers pre-allocated outside differentiated region.
+"""
+@inline function signature_from_matrix!(
+    out::Tensor{T,D,M},
+    seg::Tensor{T,D,M},
+    tmp::Tensor{T,D,M},
+    Δ_vec::Vector{T},
+    path_matrix::Matrix{T},
+    ::Val{M}
+) where {T,D,M}
+    
+    N = size(path_matrix, 1)
+    
+    # Initialize out
+    @inbounds for i in eachindex(out.coeffs)
+        out.coeffs[i] = zero(T)
+    end
+    out.coeffs[out.offsets[1] + 1] = one(T)
+    
+    # First segment
+    @inbounds for j in 1:D
+        Δ_vec[j] = path_matrix[2, j] - path_matrix[1, j]
+    end
+    non_generated_exp!(seg, Δ_vec)
+    
+    # Manual copy
+    @inbounds for i in eachindex(out.coeffs, seg.coeffs)
+        out.coeffs[i] = seg.coeffs[i]
+    end
+    
+    # Remaining segments
+    @inbounds for i in 2:N-1
+        for j in 1:D
+            Δ_vec[j] = path_matrix[i+1, j] - path_matrix[i, j]
+        end
+        
+        non_generated_exp!(seg, Δ_vec)
+        non_generated_mul!(tmp, out, seg)
+        
+        # Manual copy
+        for k in eachindex(out.coeffs, tmp.coeffs)
+            out.coeffs[k] = tmp.coeffs[k]
+        end
+    end
+    
+    return out
+end
+
+# Convenience wrapper that allocates (for non-AD use)
+@inline function signature_from_matrix(path_matrix::Matrix{T}, m::Int) where {T}
+    N, D = size(path_matrix)
+    return _sig_from_matrix_alloc(path_matrix, Val(D), Val(m))
+end
+
+@inline function _sig_from_matrix_alloc(
+    path_matrix::Matrix{T}, ::Val{D}, ::Val{M}
+) where {T,D,M}
+    out = Tensor{T,D,M}()
+    seg = Tensor{T,D,M}()
+    tmp = Tensor{T,D,M}()
+    Δ_vec = Vector{T}(undef, D)
+    
+    signature_from_matrix!(out, seg, tmp, Δ_vec, path_matrix, Val(M))
+    return out
+end
