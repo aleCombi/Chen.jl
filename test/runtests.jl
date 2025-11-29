@@ -7,4 +7,5 @@ using ChenSignatures
     include("test_float32.jl")
     include("edge_cases.jl")
     include("test_enzyme.jl")
+    include("chain_rules.jl")
 end
