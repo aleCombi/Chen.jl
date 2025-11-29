@@ -1,20 +1,24 @@
 from pathlib import Path
 import numpy as np
+from importlib.metadata import version, PackageNotFoundError
+import re
 
 def _setup_julia_package():
     """
     Configure ChenSignatures Julia package based on environment.
     
     - Development mode: Use local package via path
-    - Installed mode: Use GitHub URL
+    - Installed mode: Use General Registry with version matching Python package
     """
     import juliapkg
     
     this_file = Path(__file__).resolve()
-    repo_root = this_file.parents[2]  # python/chen/__init__.py -> repo root
+    python_root = this_file.parents[1] # python/
+    repo_root = this_file.parents[2]   # git root/
     
+    # 1. DEVELOPMENT MODE
+    # If the Julia Project.toml exists in the root, link it directly.
     if (repo_root / "Project.toml").exists():
-        # Development mode - use local package
         juliapkg.add(
             "ChenSignatures",
             uuid="4efb4129-5e83-47d2-926d-947c0e6cb76d",
@@ -22,14 +26,38 @@ def _setup_julia_package():
             dev=True
         )
         return True
-    else:
-        # Installed mode - use GitHub URL
-        juliapkg.add(
-            "ChenSignatures",
-            uuid="4efb4129-5e83-47d2-926d-947c0e6cb76d",
-            url="https://github.com/aleCombi/ChenSignatures.jl.git"
-        )
-        return False
+
+    # 2. INSTALLED / PRODUCTION MODE
+    # Determine the Python package version to enforce strict sync.
+    try:
+        # Preferred: Get version from installed package metadata
+        pkg_version = version("chen-signatures")
+        
+    except PackageNotFoundError:
+        # Fallback: Parse pyproject.toml directly (e.g., running from source without install)
+        pyproject_path = python_root / "pyproject.toml"
+        
+        if pyproject_path.exists():
+            content = pyproject_path.read_text(encoding="utf-8")
+            # Regex to match: version = "0.2.1"
+            match = re.search(r'^version\s*=\s*["\']([^"\']+)["\']', content, re.MULTILINE)
+            if match:
+                pkg_version = match.group(1)
+            else:
+                raise RuntimeError(f"Could not parse version from {pyproject_path}")
+        else:
+            raise RuntimeError(
+                "Could not determine package version. "
+                "Package is not installed and pyproject.toml was not found."
+            )
+
+    # Enforce strict version equality (e.g. "=0.2.1")
+    juliapkg.add(
+        "ChenSignatures",
+        uuid="4efb4129-5e83-47d2-926d-947c0e6cb76d",
+        version=f"={pkg_version}"
+    )
+    return False
 
 # Setup Julia package before importing juliacall
 _is_dev = _setup_julia_package()
