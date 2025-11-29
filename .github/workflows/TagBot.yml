@@ -8,12 +8,42 @@ on:
 
 jobs:
   TagBot:
-    # Only run when:
-    #  - manually triggered (workflow_dispatch), or
-    #  - JuliaTagBot comments on the repo (after a registration)
     if: github.event_name == 'workflow_dispatch' || github.actor == 'JuliaTagBot'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+
     steps:
       - uses: JuliaRegistries/TagBot@v1
         with:
+          # Using the secret you created to ensure it triggers the Python workflow
           token: ${{ secrets.TAGBOT_TOKEN }}
+          changelog: |
+            ## {{ package }} {{ version }}
+            
+            {% if release_notes %}
+            {{ release_notes }}
+            {% endif %}
+            
+            {% if previous_release %}
+            [Diff since {{ previous_release }}]({{ compare_url }})
+            {% endif %}
+            
+            {% if custom %}
+            {{ custom }}
+            {% endif %}
+            
+            {% if issues %}
+            **Closed issues:**
+            {% for issue in issues %}
+            - {{ issue.title }} (#{{ issue.number }})
+            {% endfor %}
+            {% endif %}
+            
+            {% if pulls %}
+            **Merged pull requests:**
+            {% for pull in pulls %}
+            - {{ pull.title }} (#{{ pull.number }}) (@{{ pull.author.username }})
+            {% endfor %}
+            {% endif %}
