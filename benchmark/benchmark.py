@@ -1,15 +1,16 @@
 # benchmark.py
 import os
 import csv
-import math
 import time
 import tracemalloc
-import ast
 import sys
 from pathlib import Path
 from datetime import datetime
 
 import numpy as np
+
+# Import shared utilities
+from common import load_config, make_path, SCRIPT_DIR
 
 # Try importing both libraries
 try:
@@ -25,89 +26,6 @@ try:
 except ImportError:
     HAS_PYSIGLIB = False
     print("Warning: pysiglib not available", file=sys.stderr)
-
-# -------- simple YAML-ish config loader --------
-
-def load_simple_yaml(path: Path) -> dict:
-    cfg = {}
-    with path.open("r", encoding="utf-8") as f:
-        for line in f:
-            line = line.split("#", 1)[0].strip()
-            if not line or ":" not in line:
-                continue
-            key, value = line.split(":", 1)
-            key = key.strip()
-            value = value.strip()
-            if not value:
-                continue
-
-            if value.startswith('"') and value.endswith('"'):
-                cfg[key] = value[1:-1]
-            elif value.startswith("["):
-                cfg[key] = ast.literal_eval(value)
-            else:
-                try:
-                    cfg[key] = int(value)
-                except ValueError:
-                    cfg[key] = value
-    return cfg
-
-def load_config():
-    script_dir = Path(__file__).resolve().parent
-    config_path = script_dir / "benchmark_config.yaml"
-    if not config_path.is_file():
-        raise FileNotFoundError(f"Config file not found: {config_path}")
-
-    raw = load_simple_yaml(config_path)
-
-    Ns = raw.get("Ns", [150, 1000, 2000])
-    Ds = raw.get("Ds", [2, 6, 7, 8])
-    Ms = raw.get("Ms", [4, 6])
-    path_kind = raw.get("path_kind", "linear")
-    runs_dir = raw.get("runs_dir", "runs")
-    repeats = int(raw.get("repeats", 5))
-    logsig_method = raw.get("logsig_method", "O")
-    operations = raw.get("operations", ["signature", "logsignature"])
-
-    path_kind = path_kind.lower()
-    if path_kind not in ("linear", "sin"):
-        raise ValueError(f"Unknown path_kind '{path_kind}', expected 'linear' or 'sin'.")
-
-    return {
-        "Ns": Ns,
-        "Ds": Ds,
-        "Ms": Ms,
-        "path_kind": path_kind,
-        "runs_dir": runs_dir,
-        "repeats": repeats,
-        "logsig_method": logsig_method,
-        "operations": operations,
-    }
-
-# -------- path generators --------
-
-def make_path_linear(d: int, N: int) -> np.ndarray:
-    ts = np.linspace(0.0, 1.0, N)
-    path = np.empty((N, d), dtype=float)
-    path[:, 0] = ts
-    if d > 1:
-        path[:, 1:] = 2.0 * ts[:, None]
-    return path
-
-def make_path_sin(d: int, N: int) -> np.ndarray:
-    ts = np.linspace(0.0, 1.0, N)
-    omega = 2.0 * math.pi
-    ks = np.arange(1, d + 1, dtype=float)
-    path = np.sin(omega * ts[:, None] * ks[None, :])
-    return path
-
-def make_path(d: int, N: int, kind: str) -> np.ndarray:
-    if kind == "linear":
-        return make_path_linear(d, N)
-    elif kind == "sin":
-        return make_path_sin(d, N)
-    else:
-        raise ValueError(f"Unknown path_kind: {kind}")
 
 # -------- benchmarking helpers --------
 
@@ -146,12 +64,14 @@ def bench_iisignature(d: int, m: int, N: int, path_kind: str, operation: str, me
     if operation == "signature":
         arg = m
         func = iisignature.sig
+        method_name = "sig"
     elif operation == "logsignature":
         if d < 2:
             return None
         try:
             arg = iisignature.prepare(d, m, method)
             func = lambda p, basis: iisignature.logsig(p, basis, method)
+            method_name = "logsig"
         except Exception as e:
             print(f"Error preparing iisignature for d={d}, m={m}, method={method}: {e}", file=sys.stderr)
             return None
@@ -179,7 +99,10 @@ def bench_iisignature(d: int, m: int, N: int, path_kind: str, operation: str, me
         "m": m,
         "path_kind": path_kind,
         "operation": operation,
+        "language": "python",
         "library": "iisignature",
+        "method": method_name,
+        "path_type": "ndarray",
         "t_ms": t_ms,
         "alloc_KiB": alloc_kib,
     }
@@ -198,6 +121,7 @@ def bench_pysiglib(d: int, m: int, N: int, path_kind: str, operation: str, repea
     try:
         # pysiglib API: pysiglib.signature(path, degree)
         func = lambda: pysiglib.signature(path, degree=m)
+        method_name = "signature"
     except Exception as e:
         print(f"Error setting up pysiglib sig for d={d}, m={m}: {e}", file=sys.stderr)
         return None
@@ -222,7 +146,10 @@ def bench_pysiglib(d: int, m: int, N: int, path_kind: str, operation: str, repea
         "m": m,
         "path_kind": path_kind,
         "operation": operation,
+        "language": "python",
         "library": "pysiglib",
+        "method": method_name,
+        "path_type": "ndarray",
         "t_ms": t_ms,
         "alloc_KiB": alloc_kib,
     }
@@ -235,33 +162,38 @@ def run_bench():
     Ds = cfg["Ds"]
     Ms = cfg["Ms"]
     path_kind = cfg["path_kind"]
-    runs_dir = cfg["runs_dir"]
     repeats = cfg["repeats"]
     logsig_method = cfg["logsig_method"]
     operations = cfg["operations"]
 
-    print("Running Python benchmark suite with config:")
+    print("=" * 60)
+    print("Python Benchmark Suite")
+    print("=" * 60)
+    print(f"Configuration:")
     print(f"  path_kind     = {path_kind}")
     print(f"  Ns            = {Ns}")
     print(f"  Ds            = {Ds}")
     print(f"  Ms            = {Ms}")
     print(f"  operations    = {operations}")
-    print(f"  runs_dir      = \"{runs_dir}\"")
     print(f"  repeats       = {repeats}")
-    print(f"  logsig_method = \"{logsig_method}\" (iisignature only)")
+    print(f"  logsig_method = {logsig_method} (iisignature only)")
     print(f"  iisignature   = {'available' if HAS_IISIG else 'NOT AVAILABLE'}")
     print(f"  pysiglib      = {'available' if HAS_PYSIGLIB else 'NOT AVAILABLE'}")
+    print()
 
-    script_dir = Path(__file__).resolve().parent
-
-    # If BENCHMARK_RUN_DIR is set, we write everything there.
-    env_run_dir = os.environ.get("BENCHMARK_RUN_DIR")
-    if env_run_dir:
-        runs_path = Path(env_run_dir)
+    # Check if orchestrator is overriding output location
+    env_out_csv = os.environ.get("BENCHMARK_OUT_CSV", "")
+    if env_out_csv:
+        # Orchestrator mode: write to specified location
+        csv_path = Path(env_out_csv)
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
+        print(f"Orchestrator mode: writing to {csv_path}")
+        run_dir = None
     else:
-        runs_path = script_dir / runs_dir
-
-    runs_path.mkdir(parents=True, exist_ok=True)
+        # Standalone mode: create own run folder
+        from common import setup_run_folder, finalize_run_folder
+        run_dir = setup_run_folder("benchmark_python", cfg)
+        csv_path = run_dir / "results.csv"
 
     results = []
 
@@ -282,10 +214,7 @@ def run_bench():
                         if res is not None:
                             results.append(res)
 
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    csv_path = runs_path / f"run_python_{ts}.csv"
-
-    fieldnames = ["N", "d", "m", "path_kind", "operation", "library", "t_ms", "alloc_KiB"]
+    fieldnames = ["N", "d", "m", "path_kind", "operation", "language", "library", "method", "path_type", "t_ms", "alloc_KiB"]
     with csv_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
@@ -293,7 +222,19 @@ def run_bench():
             writer.writerow(row)
 
     print("=" * 60)
-    print(f"Benchmark grid written to: {csv_path}")
+    print(f"Results written to: {csv_path}")
+    
+    # Only write summary in standalone mode
+    if run_dir is not None:
+        summary = {
+            "total_benchmarks": len(results),
+            "libraries": list(set(r["library"] for r in results)),
+            "operations": list(set(r["operation"] for r in results)),
+            "output_csv": str(csv_path.name),
+        }
+        
+        finalize_run_folder(run_dir, summary)
+    
     return csv_path
 
 if __name__ == "__main__":
