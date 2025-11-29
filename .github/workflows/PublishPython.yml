@@ -9,7 +9,8 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
+
     steps:
       - uses: actions/checkout@v4
         with:
@@ -21,7 +22,8 @@ jobs:
           VERSION=$(grep -oP '^version = "\K[^"]+' Project.toml)
           echo "version=$VERSION" >> $GITHUB_OUTPUT
       
-      - name: Update Python pyproject.toml
+      # Safety check: ensures the artifact version matches Julia even if pyproject.toml wasn't updated manually
+      - name: Ensure Python pyproject.toml matches Julia
         working-directory: python
         run: |
           sed -i 's/^version = ".*"/version = "${{ steps.version.outputs.version }}"/' pyproject.toml
