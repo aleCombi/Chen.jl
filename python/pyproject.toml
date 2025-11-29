@@ -1,6 +1,6 @@
 [project]
 name = "chen-signatures"
-version = "0.1.9"
+version = "0.1.10"
 description = "Fast path signatures"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -12,7 +12,6 @@ keywords = ["signatures", "rough-paths", "time-series", "machine-learning"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
-    # "License :: OSI Approved :: MIT License",  <-- Removed this
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
@@ -23,6 +22,7 @@ classifiers = [
 ]
 
 dependencies = [
+    "juliapkg>=0.1.10",
     "juliacall>=0.9.20",
     "numpy>=1.20.0",
 ]
@@ -42,3 +42,6 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["chen*"]
+
+[tool.setuptools.package-data]
+chen = ["juliapkg.json"]
