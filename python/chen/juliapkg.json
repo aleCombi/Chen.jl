@@ -2,7 +2,7 @@
   "packages": {
     "ChenSignatures": {
       "uuid": "4efb4129-5e83-47d2-926d-947c0e6cb76d",
-      "version": "0.1"
+      "version": "0.2"
     },
     "Zygote": {
       "uuid": "e88e6eb3-aa80-5325-afca-941959d7151f",
