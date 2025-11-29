@@ -13,6 +13,10 @@ include("lyndon_basis.jl")
 include("conversions.jl")
 include("signatures.jl")
 
+using ChainRulesCore
+using Enzyme
+include("chain_rules.jl")
+
 export sig, logsig, prepare
 export Tensor, signature_path
 export SparseTensor, Word, shuffle_product, lyndon_words, build_L, project_to_lyndon

@@ -36,16 +36,16 @@ def _ensure_chen_loaded():
     local = _find_local_project()
 
     if local is not None:
-        # Local development
+        # Local development - activate the main project at repo root
+        # No need to Pkg.add - we ARE the project!
         proj = local.as_posix()
         jl.seval(f"""
             import Pkg
-            if !haskey(Pkg.project().dependencies, "ChenSignatures")
-                Pkg.develop(path = "{proj}")
-            end
+            Pkg.activate("{proj}")
+            Pkg.instantiate()
         """)
     else:
-        # Installed: pin to version from Julia Project.toml
+        # Installed via pip: add from registry/URL
         version = _get_julia_version()
         if version:
             jl.seval(f"""
@@ -63,7 +63,7 @@ def _ensure_chen_loaded():
             """)
 
     jl.seval("using ChenSignatures")
-
+    
 # Initialize Julia environment on import
 _ensure_chen_loaded()
 
