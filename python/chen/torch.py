@@ -5,71 +5,68 @@ from juliacall import Main as jl
 import numpy as np
 import torch
 
-# Load Zygote for gradients (chen module already loads ChenSignatures)
+# Load Zygote
 jl.seval("using Zygote")
+jl.seval("using ChenSignatures")
 
+# Define the helper function ONCE in Julia.
+# This returns a tuple: (result, pullback_function)
+jl.seval("""
+function _sig_forward_backward(path, m)
+    # Zygote.pullback returns (y, back)
+    # y is the result, back is a function: dy -> (dx,)
+    return Zygote.pullback(p -> ChenSignatures.sig(p, m), path)
+end
+""")
+
+# Pre-fetch the function handle
+_sig_pullback_fn = jl.seval("_sig_forward_backward")
 
 class SigFunction(torch.autograd.Function):
     """
-    Custom autograd function that uses Julia's Zygote/ChainRules rrule
+    Optimized autograd function that caches the Zygote pullback closure.
     """
     
     @staticmethod
     def forward(ctx, path, m):
         """
-        Forward pass: compute signature
-        
-        Args:
-            path: torch tensor (N, d)
-            m: int, truncation level
+        Forward pass: compute signature and keep Zygote pullback alive.
         """
-        # Import chen here to avoid circular imports
-        import chen
+        # Ensure contiguous Float64 array for Julia
+        path_np = np.ascontiguousarray(path.detach().cpu().numpy(), dtype=np.float64)
         
-        # Convert to numpy
-        path_np = path.detach().cpu().numpy()
+        # 1. Call Zygote.pullback immediately.
+        res_jl, back_jl = _sig_pullback_fn(path_np, m)
         
-        # Use existing chen.sig function
-        sig_np = chen.sig(path_np, m)
+        # 2. Save the Julia 'back' closure in the context.
+        ctx.back_jl = back_jl
+        ctx.device = path.device
         
-        # Save for backward
-        ctx.save_for_backward(path)
-        ctx.m = m
-        
-        # Convert back to torch
-        return torch.from_numpy(sig_np).to(path.device)
+        # 3. Return result as torch tensor
+        return torch.from_numpy(np.array(res_jl)).to(path.device)
     
     @staticmethod
     def backward(ctx, grad_output):
         """
-        Backward pass: compute gradient using Julia's Zygote (which uses our rrule)
-        
-        Args:
-            grad_output: gradient of loss w.r.t. signature output
+        Backward pass: Invoke the pre-compiled Julia pullback.
         """
-        path, = ctx.saved_tensors
-        m = ctx.m
+        # Convert gradient to numpy
+        grad_output_np = np.ascontiguousarray(grad_output.detach().cpu().numpy(), dtype=np.float64)
         
-        # Convert to numpy
-        path_np = path.detach().cpu().numpy()
-        grad_output_np = grad_output.detach().cpu().numpy()
+        # 1. Retrieve the Julia pullback closure
+        back_jl = ctx.back_jl
         
-        # Use Zygote to compute gradient - it will automatically use our rrule!
-        grad_path = jl.seval("""
-        function(path, m, grad_output)
-            # Zygote will use the rrule we defined for sig
-            loss(p) = sum(ChenSignatures.sig(p, m) .* grad_output)
-            grad_tuple = Zygote.gradient(loss, path)
-            return grad_tuple[1]
-        end
-        """)(path_np, m, grad_output_np)
+        # 2. Call it. 
+        # back(dy) -> (d_path,)
+        grads_tuple = back_jl(grad_output_np)
         
-        grad_path_np = np.asarray(grad_path)
+        # 3. Extract the gradient for 'path'
+        grad_path_jl = grads_tuple[0]
         
-        # Convert back to torch
-        grad_path_torch = torch.from_numpy(grad_path_np).to(path.device)
+        # 4. Convert back to torch
+        grad_path_torch = torch.from_numpy(np.array(grad_path_jl)).to(ctx.device)
         
-        # Return gradients (None for m since it's not differentiable)
+        # Return gradients (None for m)
         return grad_path_torch, None
 
 
@@ -77,25 +74,8 @@ def sig_torch(path, m):
     """
     Compute signature with PyTorch autograd support.
     
-    Uses Julia's Zygote for automatic differentiation, which in turn
-    uses the ChainRules rrule defined for sig.
-    
     Args:
         path: torch.Tensor of shape (N, d)
         m: int, truncation level
-        
-    Returns:
-        torch.Tensor of signature coefficients
-        
-    Example:
-        >>> # IMPORTANT: Import chen.torch before importing torch in your script!
-        >>> from chen.torch import sig_torch
-        >>> import torch  # Import torch AFTER chen.torch
-        >>> 
-        >>> path = torch.randn(100, 5, requires_grad=True)
-        >>> sig = sig_torch(path, m=3)
-        >>> loss = sig.sum()
-        >>> loss.backward()
-        >>> print(path.grad.shape)  # (100, 5)
     """
     return SigFunction.apply(path, m)
