@@ -49,16 +49,15 @@ jobs:
         run: uv run pytest -m "not slow" -v
 
       - name: Verify version matches Project.toml
+        working-directory: python
         run: |
-          python << 'EOF'
+          uv run python - << 'EOF'
           import re
           from pathlib import Path
-          import sys
-          sys.path.insert(0, 'python')
           import chen
 
-          # Read Julia version
-          project_toml = Path('Project.toml')
+          # Read Julia version from repo root
+          project_toml = Path('..') / 'Project.toml'
           content = project_toml.read_text()
           match = re.search(r'version = "([^"]+)"', content)
           julia_version = match.group(1)
@@ -67,7 +66,7 @@ jobs:
           assert chen.__version__ == julia_version, \
               f"Version mismatch: Python={chen.__version__}, Julia={julia_version}"
 
-          print(f"✓ Versions match: {julia_version}")
+          print(f"Versions match: {julia_version}")
           EOF
 
   # Full Python tests with PyTorch (slower, runs on PR to master)
