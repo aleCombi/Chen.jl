@@ -26,17 +26,17 @@ jobs:
             # Try to resolve the package
             Pkg.Registry.update()
             
-            for i in 1:10
+            for i in 1:20
               try
                 Pkg.add(name="ChenSignatures", version=version)
                 println("✅ ChenSignatures@$version is available")
                 exit(0)
               catch e
-                if i == 10
-                  println("❌ ChenSignatures@$version not in General registry after 5 minutes")
+                if i == 20
+                  println("❌ ChenSignatures@$version not in General registry after 10 minutes")
                   exit(1)
                 end
-                println("⏳ Waiting for registry sync... (attempt $i/10)")
+                println("⏳ Waiting for registry sync... (attempt $i/20)")
                 sleep(30)
               end
             end
