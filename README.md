@@ -162,3 +162,18 @@ Contributions welcome!
 Open issues or pull requests here:
 
 👉 https://github.com/aleCombi/ChenSignatures.jl
+
+## Version Management
+
+**For Maintainers:**
+
+Version is managed in `Project.toml` only. Python package reads it automatically.
+
+To release a new version:
+1. Edit `Project.toml`: `version = "0.3.0"`
+2. Commit: `git commit -am "Bump version to 0.3.0"`
+3. Register with Julia General (comment `@JuliaRegistrator register` on PR/commit)
+4. TagBot creates `v0.3.0` tag automatically
+5. Tag triggers PyPI publish automatically
+
+**Never** edit version in `python/pyproject.toml` - it's computed dynamically.

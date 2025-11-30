@@ -1,32 +1,46 @@
+# .github/workflows/PublishPython.yml
 name: Publish Python Package
 
 on:
   push:
     tags:
-      - 'v*'  # Triggers when TagBot creates a tag
+      - 'v*'
 
 jobs:
   publish:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
       
-      - name: Extract version from Julia Project.toml
+      - name: Extract version from tag
         id: version
-        run: |
-          VERSION=$(grep -oP '^version = "\K[^"]+' Project.toml)
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
       
-      # Safety check: ensures the artifact version matches Julia even if pyproject.toml wasn't updated manually
-      - name: Ensure Python pyproject.toml matches Julia
-        working-directory: python
+      # Wait for Julia General registry to sync
+      - name: Verify Julia package is available
         run: |
-          sed -i 's/^version = ".*"/version = "${{ steps.version.outputs.version }}"/' pyproject.toml
+          julia -e '
+            using Pkg
+            version = "${{ steps.version.outputs.version }}"
+            
+            # Try to resolve the package
+            Pkg.Registry.update()
+            
+            for i in 1:10
+              try
+                Pkg.add(name="ChenSignatures", version=version)
+                println("✅ ChenSignatures@$version is available")
+                exit(0)
+              catch e
+                if i == 10
+                  println("❌ ChenSignatures@$version not in General registry after 5 minutes")
+                  exit(1)
+                end
+                println("⏳ Waiting for registry sync... (attempt $i/10)")
+                sleep(30)
+              end
+            end
+          '
       
       - name: Set up Python
         uses: actions/setup-python@v5

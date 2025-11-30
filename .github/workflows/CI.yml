@@ -1,61 +1,62 @@
+# .github/workflows/CI.yml
 name: CI
 
 on:
   push:
-    branches:
-      - master
+    branches: [master]
     tags: ['*']
   pull_request:
-  workflow_dispatch:
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
 
 jobs:
   test:
     name: CI
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
-    permissions:
-      actions: write
-      contents: read
     strategy:
-      fail-fast: false
       matrix:
-        version:
-          - '1'
-          - '1.12'
-        os:
-          - ubuntu-latest
-        arch:
-          - x64
+        version: ['1.10', '1']
+        os: [ubuntu-latest]
     steps:
       - uses: actions/checkout@v4
-
-      # --- NEW STEP: Fail fast if versions don't match ---
-      - name: Verify Version Sync
-        run: |
-          # Extract version from Julia Project.toml
-          JULIA_VER=$(grep -oP '^version = "\K[^"]+' Project.toml)
-          
-          # Extract version from Python pyproject.toml
-          PYTHON_VER=$(grep -oP '^version = "\K[^"]+' python/pyproject.toml)
-          
-          echo "Detected Julia version:  $JULIA_VER"
-          echo "Detected Python version: $PYTHON_VER"
-          
-          if [ "$JULIA_VER" != "$PYTHON_VER" ]; then
-            echo "::error::Version mismatch detected! You must bump both Project.toml and python/pyproject.toml."
-            exit 1
-          fi
-          echo "Versions are in sync. Proceeding."
-
       - uses: julia-actions/setup-julia@v2
         with:
           version: ${{ matrix.version }}
-          arch: ${{ matrix.arch }}
-          
       - uses: julia-actions/cache@v2
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-runtest@v1
+      
+  # Test Python build can extract version
+  test-python-version:
+    name: Python Version Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      # ✅ Install the package (brings all dependencies)
+      - name: Install package
+        run: pip install -e python/
+      
+      - name: Verify version
+        run: python -c "import chen; print(f'chen v{chen.__version__}')"
+      
+      - name: Verify version matches Project.toml
+        run: |
+          python << 'EOF'
+          import re
+          from pathlib import Path
+          import chen
+          
+          # Read Julia version
+          project_toml = Path('Project.toml')
+          content = project_toml.read_text()
+          match = re.search(r'version = "([^"]+)"', content)
+          julia_version = match.group(1)
+          
+          # Compare
+          assert chen.__version__ == julia_version, \
+              f"Version mismatch: Python={chen.__version__}, Julia={julia_version}"
+          
+          print(f"✓ Versions match: {julia_version}")
+          EOF

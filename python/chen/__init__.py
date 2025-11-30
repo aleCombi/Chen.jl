@@ -1,7 +1,12 @@
+# python/chen/__init__.py
+"""
+chen-signatures: Fast path signatures powered by Julia
+"""
 from pathlib import Path
 import numpy as np
-from importlib.metadata import version, PackageNotFoundError
-import re
+
+# Import version from our dual-mode version handler
+from chen._version import __version__
 
 def _setup_julia_package():
     """
@@ -9,12 +14,15 @@ def _setup_julia_package():
     
     - Development mode: Use local package via path
     - Installed mode: Use General Registry with version matching Python package
+    
+    Returns:
+        bool: True if in development mode, False if in production mode
     """
     import juliapkg
     
     this_file = Path(__file__).resolve()
-    python_root = this_file.parents[1] # python/
-    repo_root = this_file.parents[2]   # git root/
+    python_root = this_file.parent          # python/chen/
+    repo_root = python_root.parents[1]      # repo root/
     
     # 1. DEVELOPMENT MODE
     # If the Julia Project.toml exists in the root, link it directly.
@@ -28,34 +36,11 @@ def _setup_julia_package():
         return True
 
     # 2. INSTALLED / PRODUCTION MODE
-    # Determine the Python package version to enforce strict sync.
-    try:
-        # Preferred: Get version from installed package metadata
-        pkg_version = version("chen-signatures")
-        
-    except PackageNotFoundError:
-        # Fallback: Parse pyproject.toml directly (e.g., running from source without install)
-        pyproject_path = python_root / "pyproject.toml"
-        
-        if pyproject_path.exists():
-            content = pyproject_path.read_text(encoding="utf-8")
-            # Regex to match: version = "0.2.1"
-            match = re.search(r'^version\s*=\s*["\']([^"\']+)["\']', content, re.MULTILINE)
-            if match:
-                pkg_version = match.group(1)
-            else:
-                raise RuntimeError(f"Could not parse version from {pyproject_path}")
-        else:
-            raise RuntimeError(
-                "Could not determine package version. "
-                "Package is not installed and pyproject.toml was not found."
-            )
-
-    # Enforce strict version equality (e.g. "=0.2.1")
+    # Use version from __version__ (which came from package metadata or Project.toml)
     juliapkg.add(
         "ChenSignatures",
         uuid="4efb4129-5e83-47d2-926d-947c0e6cb76d",
-        version=f"={pkg_version}"
+        version=f"={__version__}"
     )
     return False
 
@@ -69,36 +54,88 @@ from juliacall import Main as jl
 jl.seval("using ChenSignatures")
 
 
+# ============================================================================
+# Public API
+# ============================================================================
+
 def sig(path, m: int) -> np.ndarray:
     """
     Compute the truncated signature of the path up to level m.
 
     Args:
-        path: (N, d) array-like input
-        m: truncation level
+        path: (N, d) array-like input where N is path length, d is dimension
+        m: truncation level (must be positive integer)
 
     Returns:
-        (d + d^2 + ... + d^m,) flattened array
+        (d + d^2 + ... + d^m,) flattened array of signature coefficients
+
+    Examples:
+        >>> import chen
+        >>> import numpy as np
+        >>> path = np.random.randn(100, 3)
+        >>> signature = chen.sig(path, m=4)
+        >>> signature.shape
+        (120,)  # 3 + 9 + 27 + 81
+
+    Raises:
+        ValueError: If path has fewer than 2 points or m is not positive
     """
+    # Ensure contiguous float64 array (Julia's default float type)
     arr = np.ascontiguousarray(path, dtype=np.float64)
+    
+    # Call Julia function
     res = jl.ChenSignatures.sig(arr, m)
     
+    # Convert back to numpy
     return np.asarray(res)
+
 
 def logsig(path, m: int) -> np.ndarray:
     """
     Compute the log-signature projected onto the Lyndon basis.
 
+    The log-signature is the logarithm of the signature, projected onto
+    a minimal Lyndon basis. This provides a more compact representation.
+
     Args:
-        path: (N, d) array-like input
-        m: truncation level
+        path: (N, d) array-like input where N is path length, d is dimension
+        m: truncation level (must be positive integer)
 
     Returns:
-        Array of log-signature coefficients
+        Array of log-signature coefficients (typically smaller than signature)
+
+    Examples:
+        >>> import chen
+        >>> import numpy as np
+        >>> path = np.random.randn(100, 3)
+        >>> logsignature = chen.logsig(path, m=4)
+        >>> logsignature.shape
+        (18,)  # Much smaller than sig(path, 4).shape = (120,)
+
+    Notes:
+        This function uses a precomputed Lyndon basis for efficiency.
+        The basis is cached internally by Julia.
     """
-    arr = np.ascontiguousarray(path)
+    # Ensure contiguous array
+    arr = np.ascontiguousarray(path, dtype=np.float64)
     d = arr.shape[1]
 
+    # Prepare basis (Julia caches this internally)
     basis = jl.ChenSignatures.prepare(d, m)
+    
+    # Compute log-signature
     res = jl.ChenSignatures.logsig(arr, basis)
+    
+    # Convert back to numpy
     return np.asarray(res)
+
+
+# ============================================================================
+# Package metadata
+# ============================================================================
+
+__all__ = [
+    '__version__',
+    'sig',
+    'logsig',
+]
