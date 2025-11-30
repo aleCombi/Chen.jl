@@ -30,8 +30,8 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=7.0.0", "pytest-cov>=4.0.0"]
 torch = ["torch>=2.0.0"]
-benchmark = ["pysiglib>=0.2.2", "iisignature>=0.24"]
-all = ["pytest>=7.0.0", "pytest-cov>=4.0.0", "torch>=2.0.0", "pysiglib>=0.2.2", "iisignature>=0.24"]
+benchmark = ["pysiglib>=0.2.2"]
+all = ["pytest>=7.0.0", "pytest-cov>=4.0.0", "torch>=2.0.0", "pysiglib>=0.2.2"]
 
 [project.urls]
 Homepage = "https://github.com/aleCombi/ChenSignatures.jl"
@@ -61,4 +61,7 @@ addopts = [
     "-v",
     "--strict-markers",
     "--tb=short",
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
 ]
