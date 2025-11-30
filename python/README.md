@@ -16,19 +16,6 @@ Full benchmark notebooks and articles will be published separately.
 
 ---
 
-## Why chen-signatures?
-
-| Feature | chen-signatures | iisignature | pysiglib |
-|---------|-----------------|-------------|-----------|
-| **Speed** | 🚀 Optimized Julia backend | ⚠️ Older implementation | 🔄 Similar to chen-signatures |
-| **Python ≥ 3.10** | ✅ Yes | ❌ No (≤3.9 only) | ✅ Yes |
-| **Python 3.13** | ✅ Yes | ❌ No | ✅ Yes |
-| **Log-signature** | ✅ Yes | ⚠️ Limited | ❌ Not supported |
-| **Autodiff** | ✅ Yes (ForwardDiff) | ❌ No | ❌ No |
-| **Maintenance** | ✅ Active | ⚠️ Unmaintained | ✅ Active |
-
----
-
 ## Installation
 
 ```bash
