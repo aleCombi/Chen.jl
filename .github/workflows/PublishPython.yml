@@ -52,6 +52,8 @@ jobs:
       
       - name: Build package
         working-directory: python
+        env:
+          CHEN_VERSION: ${{ steps.version.outputs.version }}
         run: python -m build
       
       - name: Publish to PyPI
