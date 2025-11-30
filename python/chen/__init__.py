@@ -129,6 +129,51 @@ def logsig(path, m: int) -> np.ndarray:
     # Convert back to numpy
     return np.asarray(res)
 
+def prepare_logsig(d: int, m: int):
+    """
+    Precompute and cache the Lyndon basis / internal structure for log-signature.
+
+    This is analogous to `iisignature.prepare(d, m)`.
+
+    Args:
+        d: path dimension
+        m: truncation level (must be positive integer)
+
+    Returns:
+        A Julia-side basis object that can be reused in subsequent `logsig_from_basis` calls.
+    """
+    if m <= 0:
+        raise ValueError("Truncation level m must be a positive integer")
+    if d <= 0:
+        raise ValueError("Dimension d must be a positive integer")
+
+    return jl.ChenSignatures.prepare(d, m)
+
+
+def logsig(path, basis) -> np.ndarray:
+    """
+    Compute the log-signature using a precomputed basis.
+
+    This is analogous to `iisignature.logsig(path, prep)`.
+
+    Args:
+        path: (N, d) array-like input where N is path length, d is dimension
+        basis: object returned by `prepare_logsig(d, m)`
+
+    Returns:
+        1D numpy array of log-signature coefficients.
+    """
+    # Ensure contiguous array
+    arr = np.ascontiguousarray(path, dtype=np.float64)
+
+    # Optional: sanity check dimension match (if basis has `d` and `m` fields in Julia)
+    # You can skip this if it's too expensive / awkward:
+    # d = arr.shape[1]
+    # assert basis.d == d, "Path dimension does not match prepared basis"
+
+    res = jl.ChenSignatures.logsig(arr, basis)
+    return np.asarray(res)
+
 
 # ============================================================================
 # Package metadata
