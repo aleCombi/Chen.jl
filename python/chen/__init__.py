@@ -90,43 +90,71 @@ def sig(path, m: int) -> np.ndarray:
     return np.asarray(res)
 
 
-def logsig(path, m: int) -> np.ndarray:
+def prepare_logsig(d: int, m: int):
     """
-    Compute the log-signature projected onto the Lyndon basis.
+    Precompute and cache the Lyndon basis and projection matrix for log-signature.
 
-    The log-signature is the logarithm of the signature, projected onto
-    a minimal Lyndon basis. This provides a more compact representation.
+    This wraps the Julia function `ChenSignatures.prepare(d, m)`, which returns a
+    `BasisCache` object containing:
+        - d: path dimension
+        - m: truncation level
+        - lynds: Lyndon words
+        - L: projection matrix
 
     Args:
-        path: (N, d) array-like input where N is path length, d is dimension
-        m: truncation level (must be positive integer)
+        d: path dimension (must be a positive integer)
+        m: truncation level (must be a positive integer)
 
     Returns:
-        Array of log-signature coefficients (typically smaller than signature)
-
-    Examples:
-        >>> import chen
-        >>> import numpy as np
-        >>> path = np.random.randn(100, 3)
-        >>> logsignature = chen.logsig(path, m=4)
-        >>> logsignature.shape
-        (18,)  # Much smaller than sig(path, 4).shape = (120,)
-
-    Notes:
-        This function uses a precomputed Lyndon basis for efficiency.
-        The basis is cached internally by Julia.
+        A Julia `BasisCache` object that can be reused in subsequent `logsig` calls.
     """
-    # Ensure contiguous array
+    if d <= 0:
+        raise ValueError("Dimension d must be a positive integer")
+    if m <= 0:
+        raise ValueError("Truncation level m must be a positive integer")
+
+    # Calls the Julia function:
+    #   function prepare(d::Int, m::Int)::BasisCache
+    return jl.ChenSignatures.prepare(d, m)
+
+
+def logsig(path, basis) -> np.ndarray:
+    """
+    Compute the log-signature of a path using a precomputed basis.
+
+    This wraps the Julia function:
+        ChenSignatures.logsig(path::AbstractMatrix, basis::BasisCache)
+
+    It is analogous to `iisignature.logsig(path, prep)`, where `basis` is the
+    result of `prepare_logsig(d, m)`.
+
+    Args:
+        path: (N, d) array-like input where N is path length, d is dimension.
+        basis: Basis object returned by `prepare_logsig(d, m)` (a Julia `BasisCache`).
+
+    Returns:
+        1D numpy array of log-signature coefficients (flattened Lyndon basis projection).
+    """
+    # Convert to contiguous float64 2D array
     arr = np.ascontiguousarray(path, dtype=np.float64)
+    if arr.ndim != 2:
+        raise ValueError(f"`path` must be 2D (N, d); got shape {arr.shape}")
+
     d = arr.shape[1]
 
-    # Prepare basis (Julia caches this internally)
-    basis = jl.ChenSignatures.prepare(d, m)
-    
-    # Compute log-signature
+    # Sanity check: match Python path dimension with Julia BasisCache.d if available
+    basis_d = getattr(basis, "d", None)
+    if basis_d is not None and basis_d != d:
+        raise ValueError(
+            f"Dimension mismatch between path (d={d}) and basis (d={basis_d}). "
+            "Did you call prepare_logsig with the correct dimension?"
+        )
+
+    # Call Julia:
+    #   function logsig(path::AbstractMatrix{T}, basis::BasisCache)::Vector{T}
     res = jl.ChenSignatures.logsig(arr, basis)
-    
-    # Convert back to numpy
+
+    # Convert Julia vector to numpy array
     return np.asarray(res)
 
 
@@ -138,4 +166,5 @@ __all__ = [
     '__version__',
     'sig',
     'logsig',
+    'prepare_logsig',
 ]

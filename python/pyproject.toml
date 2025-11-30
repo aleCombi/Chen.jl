@@ -28,7 +28,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-benchmark = ["pysiglib>=0.2.2", "iisignature>=0.24", "pytest"]
+dev = ["pytest>=7.0.0", "pytest-cov>=4.0.0"]
+torch = ["torch>=2.0.0"]
+benchmark = ["pysiglib>=0.2.2"]
+all = ["pytest>=7.0.0", "pytest-cov>=4.0.0", "torch>=2.0.0", "pysiglib>=0.2.2"]
 
 [project.urls]
 Homepage = "https://github.com/aleCombi/ChenSignatures.jl"
@@ -48,3 +51,17 @@ include = ["chen*"]
 
 [tool.setuptools.package-data]
 chen = ["juliapkg.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-v",
+    "--strict-markers",
+    "--tb=short",
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]

@@ -24,39 +24,69 @@ jobs:
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-runtest@v1
       
-  # Test Python build can extract version
-  test-python-version:
-    name: Python Version Check
+  # Basic Python tests (fast, always runs)
+  test-python-basic:
+    name: Python Tests (Basic)
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.9', '3.11', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+
+      - name: Install dependencies
+        working-directory: python
+        run: uv sync --extra dev
+
+      - name: Run basic tests (no torch, no slow tests)
+        working-directory: python
+        run: uv run pytest -m "not slow" -v
+
+      - name: Verify version matches Project.toml
+        working-directory: python
+        run: |
+          uv run python - << 'EOF'
+          import re
+          from pathlib import Path
+          import chen
+
+          # Read Julia version from repo root
+          project_toml = Path('..') / 'Project.toml'
+          content = project_toml.read_text()
+          match = re.search(r'version = "([^"]+)"', content)
+          julia_version = match.group(1)
+
+          # Compare
+          assert chen.__version__ == julia_version, \
+              f"Version mismatch: Python={chen.__version__}, Julia={julia_version}"
+
+          print(f"Versions match: {julia_version}")
+          EOF
+
+  # Full Python tests with PyTorch (slower, runs on PR to master)
+  test-python-full:
+    name: Python Tests (Full with PyTorch)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/master'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      
-      # ✅ Install the package (brings all dependencies)
-      - name: Install package
-        run: pip install -e python/
-      
-      - name: Verify version
-        run: python -c "import chen; print(f'chen v{chen.__version__}')"
-      
-      - name: Verify version matches Project.toml
-        run: |
-          python << 'EOF'
-          import re
-          from pathlib import Path
-          import chen
-          
-          # Read Julia version
-          project_toml = Path('Project.toml')
-          content = project_toml.read_text()
-          match = re.search(r'version = "([^"]+)"', content)
-          julia_version = match.group(1)
-          
-          # Compare
-          assert chen.__version__ == julia_version, \
-              f"Version mismatch: Python={chen.__version__}, Julia={julia_version}"
-          
-          print(f"✓ Versions match: {julia_version}")
-          EOF
+
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+
+      - name: Install all dependencies including PyTorch
+        working-directory: python
+        run: uv sync --extra all
+
+      - name: Run all tests including PyTorch
+        working-directory: python
+        run: uv run pytest -v

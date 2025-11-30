@@ -6,6 +6,7 @@ Run this after installing the package to ensure everything is configured properl
 
 import sys
 from pathlib import Path
+import pytest
 
 def test_juliapkg_setup():
     """Test that juliapkg is properly configured"""
@@ -19,9 +20,9 @@ def test_juliapkg_setup():
     try:
         import juliapkg
         print(f"  ✓ juliapkg installed")
-    except ImportError:
+    except ImportError as e:
         print("  ✗ juliapkg not installed - run: pip install juliapkg")
-        return False
+        pytest.fail(f"juliapkg not installed: {e}")
     print()
     
     # Test 2: Check juliapkg.json exists
@@ -32,20 +33,17 @@ def test_juliapkg_setup():
         chen_path = Path(chen.__file__).parent
         juliapkg_json = chen_path / "juliapkg.json"
         
-        if juliapkg_json.exists():
-            print(f"  ✓ Found at {juliapkg_json}")
-            import json
-            with open(juliapkg_json) as f:
-                config = json.load(f)
-            print(f"  ✓ Configuration: {list(config.get('packages', {}).keys())}")
-        else:
-            print(f"  ✗ Not found at {juliapkg_json}")
-            return False
+        assert juliapkg_json.exists(), f"juliapkg.json not found at {juliapkg_json}"
+        print(f"  ✓ Found at {juliapkg_json}")
+        import json
+        with open(juliapkg_json) as f:
+            config = json.load(f)
+        print(f"  ✓ Configuration: {list(config.get('packages', {}).keys())}")
     except Exception as e:
         print(f"  ✗ Error: {e}")
         import traceback
         traceback.print_exc()
-        return False
+        pytest.fail(f"Failed to check juliapkg.json: {e}")
     print()
     
     # Test 3: Check Julia environment status
@@ -64,7 +62,7 @@ def test_juliapkg_setup():
         print("  ✓ Julia environment ready")
     except Exception as e:
         print(f"  ✗ Error: {e}")
-        return False
+        pytest.fail(f"Failed to load Julia environment: {e}")
     print()
     
     # Test 4: Test chen functionality (chen already imported in Test 2)
@@ -80,18 +78,15 @@ def test_juliapkg_setup():
         print(f"    Input shape: {path.shape}")
         print(f"    Output shape: {sig.shape}")
         print(f"    Expected output size: {3 + 9} = 12")
-        
-        if len(sig) == 12:
-            print("  ✓ Output size correct")
-        else:
-            print(f"  ✗ Output size incorrect: {len(sig)} != 12")
-            return False
-            
+
+        assert len(sig) == 12, f"Output size incorrect: {len(sig)} != 12"
+        print("  ✓ Output size correct")
+
     except Exception as e:
         print(f"  ✗ Error: {e}")
         import traceback
         traceback.print_exc()
-        return False
+        pytest.fail(f"Failed to test chen functionality: {e}")
     print()
     
     # Test 5: Check development mode detection
@@ -113,8 +108,7 @@ def test_juliapkg_setup():
     print("="*70)
     print("ALL TESTS PASSED ✓")
     print("="*70)
-    return True
 
 if __name__ == "__main__":
-    success = test_juliapkg_setup()
-    sys.exit(0 if success else 1)
+    # When run as a script, call pytest on this file
+    sys.exit(pytest.main([__file__, "-v"]))
