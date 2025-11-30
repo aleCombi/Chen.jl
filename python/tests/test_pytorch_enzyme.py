@@ -1,8 +1,11 @@
 """PyTorch autograd wrapper for chen.sig using Julia's ChainRules rrule"""
 
+import pytest
 import numpy as np
 from juliacall import Main as jl
-import torch
+
+# Skip entire module if torch is not installed
+torch = pytest.importorskip("torch", reason="PyTorch not installed. Install with: uv sync --extra torch")
 
 # Import the existing chen module which already loads ChenSignatures
 import chen
