@@ -21,7 +21,8 @@ def test_basic_signature():
 def test_logsignature():
     """Test log-signature computation"""
     path = np.random.randn(100, 5)
-    logsig = chen.logsig(path, 3)
+    basis = chen.prepare_logsig(path.shape[1], 3)
+    logsig = chen.logsig(path, basis)
 
     assert logsig.shape[0] > 0, "Log-signature should not be empty"
     assert isinstance(logsig, np.ndarray), "Log-signature should be numpy array"
