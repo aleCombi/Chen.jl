@@ -3,10 +3,11 @@
 import pytest
 import numpy as np
 
+# Import chen (pulls in juliacall) before torch to avoid juliacall torch warning
+import chen
+
 # Skip entire module if torch is not installed
 torch = pytest.importorskip("torch", reason="PyTorch not installed. Install with: uv sync --extra torch")
-
-import chen
 from chen.torch import sig_torch
 
 
