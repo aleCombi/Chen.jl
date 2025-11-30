@@ -1,6 +1,6 @@
 [project]
 name = "chen-signatures"
-version = "0.2.1"
+dynamic = ["version"]
 description = "Fast path signatures"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -38,6 +38,9 @@ Issues = "https://github.com/aleCombi/ChenSignatures.jl/issues"
 [build-system]
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.dynamic]
+version = {attr = "chen._version.__version__"}
 
 [tool.setuptools.packages.find]
 where = ["."]
