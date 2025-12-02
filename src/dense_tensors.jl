@@ -1,5 +1,4 @@
 using StaticArrays
-using LoopVectorization: @avx, @turbo
 
 struct Tensor{T,D,M} <: AbstractTensor{T}
     coeffs::Vector{T}
@@ -73,10 +72,22 @@ end
 end
 
 @inline function add_scaled!(dest::Tensor{T,D,M}, src::Tensor{T,D,M}, α::T) where {T,D,M}
-    @inbounds @turbo for i in eachindex(dest.coeffs, src.coeffs)
-        dest.coeffs[i] = muladd(α, src.coeffs[i], dest.coeffs[i])
+    off = dest.offsets
+
+    # Level 0
+    idx0 = off[1] + 1
+    @inbounds dest.coeffs[idx0] = muladd(α, src.coeffs[idx0], dest.coeffs[idx0])
+
+    # Levels 1 to M
+    @inbounds for k in 1:M
+        len = D^k
+        start = off[k+1] + 1
+        @simd for i in 0:(len-1)
+            dest.coeffs[start + i] = muladd(α, src.coeffs[start + i], dest.coeffs[start + i])
+        end
     end
-    dest
+
+    return dest
 end
 
 @inline function mul!(

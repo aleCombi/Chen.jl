@@ -35,11 +35,11 @@ They form a powerful, coordinate-free representation used in:
 
 ### Performance
 - Highly optimized kernels using:
-  - [`LoopVectorization.jl`](https://github.com/JuliaSIMD/LoopVectorization.jl)  
   - [`StaticArrays.jl`](https://github.com/JuliaArrays/StaticArrays.jl)
+  - Native Julia SIMD vectorization
 - Designed to scale across:
-  - long paths (large `N`)  
-  - high dimensions (`d`)  
+  - long paths (large `N`)
+  - high dimensions (`d`)
   - large truncation levels (`m`)
 
 ### Validation
@@ -102,9 +102,10 @@ julia --project=benchmark benchmark/benchmark.jl
 
 ChenSignatures.jl uses a minimal, high-performance stack:
 
-- [`StaticArrays.jl`](https://github.com/JuliaArrays/StaticArrays.jl)  
-- [`LoopVectorization.jl`](https://github.com/JuliaSIMD/LoopVectorization.jl)  
-- `LinearAlgebra`  
+- [`StaticArrays.jl`](https://github.com/JuliaArrays/StaticArrays.jl)
+- `LinearAlgebra`
+- [`ChainRulesCore.jl`](https://github.com/JuliaDiff/ChainRulesCore.jl) for AD support
+- [`Enzyme.jl`](https://github.com/EnzymeAD/Enzyme.jl) for automatic differentiation  
 
 ---
 

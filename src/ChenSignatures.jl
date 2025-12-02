@@ -2,7 +2,6 @@ module ChenSignatures
 
 using StaticArrays
 using LinearAlgebra
-using LoopVectorization
 
 abstract type AbstractTensor{T} end
 
