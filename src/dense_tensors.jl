@@ -1,6 +1,41 @@
 using StaticArrays
-using LoopVectorization: @avx, @turbo
 
+"""
+    Tensor{T,D,M} <: AbstractTensor{T}
+
+Dense tensor algebra element up to level `M` in dimension `D`.
+
+This is the core data structure for representing truncated tensor series in the path
+signature computation. It stores coefficients for all tensor levels from 0 to `M` in a
+single flat array with efficient memory layout.
+
+# Type Parameters
+- `T`: Element type (e.g., `Float64`, `Float32`)
+- `D`: Dimension (number of coordinate axes)
+- `M`: Maximum truncation level
+
+# Fields
+- `coeffs::Vector{T}`: Flattened coefficient array containing all levels 0 through `M`.
+  Length is `1 + D + D² + ... + Dᴹ⁺¹` (includes padding for alignment).
+- `offsets::Vector{Int}`: Starting indices for each level in `coeffs`. Length `M+2`.
+
+# Construction
+```julia
+# Create zero tensor
+t = Tensor{Float64, 3, 4}()
+
+# Create from coefficient vector
+coeffs = randn(len)  # Must match expected length
+t = Tensor{Float64, 3, 4}(coeffs)
+```
+
+# Notes
+- Most users should use [`sig`](@ref) instead of working with `Tensor` directly.
+- For advanced applications requiring direct tensor manipulation, see [`signature_path!`](@ref).
+- The type parameters `{T,D,M}` are compile-time constants, enabling aggressive optimization.
+
+See also: [`sig`](@ref), [`signature_path`](@ref), [`SignatureWorkspace`](@ref)
+"""
 struct Tensor{T,D,M} <: AbstractTensor{T}
     coeffs::Vector{T}
     offsets::Vector{Int}
@@ -73,10 +108,22 @@ end
 end
 
 @inline function add_scaled!(dest::Tensor{T,D,M}, src::Tensor{T,D,M}, α::T) where {T,D,M}
-    @inbounds @turbo for i in eachindex(dest.coeffs, src.coeffs)
-        dest.coeffs[i] = muladd(α, src.coeffs[i], dest.coeffs[i])
+    off = dest.offsets
+
+    # Level 0
+    idx0 = off[1] + 1
+    @inbounds dest.coeffs[idx0] = muladd(α, src.coeffs[idx0], dest.coeffs[idx0])
+
+    # Levels 1 to M
+    @inbounds for k in 1:M
+        len = D^k
+        start = off[k+1] + 1
+        @simd for i in 0:(len-1)
+            dest.coeffs[start + i] = muladd(α, src.coeffs[start + i], dest.coeffs[start + i])
+        end
     end
-    dest
+
+    return dest
 end
 
 @inline function mul!(

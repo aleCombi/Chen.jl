@@ -35,8 +35,12 @@ import numpy as np
 
 path = np.random.randn(1000, 10)
 
+# Compute signature
 signature = chen.sig(path, m=5)
-logsignature = chen.logsig(path, m=5)
+
+# Compute log-signature (requires prepare step)
+basis = chen.prepare_logsig(d=10, m=5)  # d must match path dimension
+logsignature = chen.logsig(path, basis)
 ```
 
 ---
@@ -48,16 +52,49 @@ logsignature = chen.logsig(path, m=5)
 Compute a truncated signature up to level `m`.
 
 ```python
-sig = chen.sig(path, m=3)
+signature = chen.sig(path, m=3)
 ```
 
-### `logsig(path, m)`
+**Args:**
+- `path`: (N, d) array-like where N is path length, d is dimension
+- `m`: truncation level (positive integer)
 
-Compute log-signatures using the Lyndon basis.
+**Returns:** 1D numpy array of signature coefficients
+
+---
+
+### `prepare_logsig(d, m)`
+
+Precompute and cache the Lyndon basis for log-signature computation.
 
 ```python
-logsig = chen.logsig(path, m=5)
+basis = chen.prepare_logsig(d=10, m=5)
 ```
+
+**Args:**
+- `d`: path dimension (positive integer)
+- `m`: truncation level (positive integer)
+
+**Returns:** Basis cache object (reusable across multiple paths)
+
+---
+
+### `logsig(path, basis)`
+
+Compute log-signatures using a precomputed Lyndon basis.
+
+```python
+basis = chen.prepare_logsig(d=10, m=5)
+logsig = chen.logsig(path, basis)
+```
+
+**Args:**
+- `path`: (N, d) array-like where N is path length, d is dimension
+- `basis`: Basis object from `prepare_logsig(d, m)`
+
+**Returns:** 1D numpy array of log-signature coefficients (Lyndon basis projection)
+
+**Note:** The `basis` object should match the dimension of your path. Prepare it once and reuse for multiple paths of the same dimension.
 
 ---
 

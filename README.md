@@ -35,11 +35,11 @@ They form a powerful, coordinate-free representation used in:
 
 ### Performance
 - Highly optimized kernels using:
-  - [`LoopVectorization.jl`](https://github.com/JuliaSIMD/LoopVectorization.jl)  
   - [`StaticArrays.jl`](https://github.com/JuliaArrays/StaticArrays.jl)
+  - Native Julia SIMD vectorization
 - Designed to scale across:
-  - long paths (large `N`)  
-  - high dimensions (`d`)  
+  - long paths (large `N`)
+  - high dimensions (`d`)
   - large truncation levels (`m`)
 
 ### Validation
@@ -71,42 +71,29 @@ Features:
 
 ---
 
-## 📊 Benchmark Suite
+## 📊 Benchmarks
 
-A reproducible, multi-library benchmark suite lives in:
+### Cross-Language Benchmarks
 
-📁 **[`benchmark/`](./benchmark)**  
-📁 **[`python/`](./python)** (Python-side benchmarking tools)
+For comprehensive performance comparisons against **iisignature** and **pysiglib**, see the dedicated benchmark repository:
 
-The suite compares:
+👉 **[aleCombi/sig-benchmarks](https://github.com/aleCombi/sig-benchmarks)**
 
-- ChenSignatures.jl  
-- iisignature  
-- pysiglib  
+This external suite provides:
+- Isolated environment testing (Python vs Julia)
+- Multiple library comparisons
+- Detailed performance profiles and visualizations
+- Methodologically fair benchmarking
 
-and measures:
-- runtime  
-- memory  
-- speed ratios  
-- correctness differences  
+### Internal Julia Benchmarks
 
-Run everything with:
+For quick development regression testing, see:
 
+📁 **[`benchmark/`](./benchmark)**
+
+Run Julia-only benchmarks:
 ```bash
-uv run run_benchmark.py
-```
-
-This creates structured outputs:
-
-```
-runs/
-  2025-.../
-      config.yaml
-      run_julia.csv
-      run_python.csv
-      comparison.csv
-      logs/
-      plots/
+julia --project=benchmark benchmark/benchmark.jl
 ```
 
 ---
@@ -115,9 +102,10 @@ runs/
 
 ChenSignatures.jl uses a minimal, high-performance stack:
 
-- [`StaticArrays.jl`](https://github.com/JuliaArrays/StaticArrays.jl)  
-- [`LoopVectorization.jl`](https://github.com/JuliaSIMD/LoopVectorization.jl)  
-- `LinearAlgebra`  
+- [`StaticArrays.jl`](https://github.com/JuliaArrays/StaticArrays.jl)
+- `LinearAlgebra`
+- [`ChainRulesCore.jl`](https://github.com/JuliaDiff/ChainRulesCore.jl) for AD support
+- [`Enzyme.jl`](https://github.com/EnzymeAD/Enzyme.jl) for automatic differentiation  
 
 ---
 
@@ -127,8 +115,11 @@ ChenSignatures.jl uses a minimal, high-performance stack:
 using ChenSignatures
 
 path = randn(1000, 5)
-sig = signature(path, 4)
-logsig = logsignature(path, 4)
+sig_result = sig(path, 4)
+
+# For logsig, need to prepare basis first
+basis = prepare(5, 4)  # dimension=5, level=4
+logsig_result = logsig(path, basis)
 ```
 
 ---
@@ -137,9 +128,9 @@ logsig = logsignature(path, 4)
 
 The repository includes:
 
-- full Julia test suite  
-- cross-language correctness checking (`benchmark/check_signatures.py`)  
-- automatic fixture generation via Python (`generate_fixtures.py`)  
+- Full Julia test suite (run with `julia --project -e 'using Pkg; Pkg.test()'`)
+- Cross-language validation fixtures at [`test/validation/`](./test/validation)
+- Automatic fixture generation via [`test/validation/generate_fixtures.py`](./test/validation/generate_fixtures.py)  
 
 ---
 

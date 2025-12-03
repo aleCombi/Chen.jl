@@ -2,13 +2,12 @@ module ChenSignatures
 
 using StaticArrays
 using LinearAlgebra
-using LoopVectorization
 
 abstract type AbstractTensor{T} end
 
 include("generic_ops.jl")
 include("sparse_tensors.jl")
-include("dense_tensors.jl") 
+include("dense_tensors.jl")
 include("lyndon_basis.jl")
 include("conversions.jl")
 include("signatures.jl")
@@ -17,8 +16,23 @@ using ChainRulesCore
 using Enzyme
 include("chain_rules.jl")
 
-export sig, logsig, prepare
-export Tensor, signature_path
-export SparseTensor, Word, shuffle_product, lyndon_words, build_L, project_to_lyndon
+# ============================================================================
+# Public API Exports
+# ============================================================================
+#
+# Primary user-facing functions for computing path signatures:
+export sig          # Compute truncated path signature (returns flattened vector)
+export logsig       # Compute log-signature projected onto Lyndon basis
+export prepare      # Precompute Lyndon basis for log-signature computations
+#
+# Core types and lower-level API:
+export Tensor              # Dense tensor algebra representation
+export signature_path      # Lower-level signature computation (returns Tensor)
+export SignatureWorkspace  # Preallocated workspace for zero-allocation hot paths
+export BasisCache          # Cached Lyndon basis data for logsig
+
+# Note: SparseTensor, Word, shuffle_product, lyndon_words, build_L, and
+# project_to_lyndon are internal implementation details and not exported.
+# Advanced users can access them via ChenSignatures.SparseTensor, etc.
 
 end
