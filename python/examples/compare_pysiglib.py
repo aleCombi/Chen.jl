@@ -4,7 +4,37 @@ Compare ChenSignatures against pySigLib for correctness and performance.
 IMPORTANT: Different array layout conventions:
 - ChenSignatures: (N, d, B) where N=length, d=dimension, B=batch_size
 - pySigLib: (B, N, d) where B=batch_size, N=length, d=dimension
+
+Threading control:
+- Julia: JULIA_NUM_THREADS environment variable (must be set BEFORE Python starts)
+- pySigLib: n_jobs parameter (-1 = all threads, 1 = serial)
+
+Usage:
+  # Single-threaded comparison (most fair for benchmarking):
+  set JULIA_NUM_THREADS=1 && python compare_pysiglib.py     (Windows)
+  JULIA_NUM_THREADS=1 python compare_pysiglib.py            (Linux/Mac)
+
+  # Multi-threaded comparison with 8 threads:
+  set JULIA_NUM_THREADS=8 && python compare_pysiglib.py     (Windows)
+  JULIA_NUM_THREADS=8 python compare_pysiglib.py            (Linux/Mac)
+
+  # Full parallelism (uses all available cores):
+  set JULIA_NUM_THREADS=16 && python compare_pysiglib.py    (Windows)
+  JULIA_NUM_THREADS=16 python compare_pysiglib.py           (Linux/Mac)
+
+Note: By default, if JULIA_NUM_THREADS is not set, the script attempts to set it
+to the CPU count, but this only works if juliacall hasn't been initialized yet.
+For reliable thread control, always set JULIA_NUM_THREADS before running Python.
 """
+
+import os
+
+# Set JULIA_NUM_THREADS before importing chen (Julia initialization happens on import)
+# This can be controlled via environment variable or defaults to CPU count
+if "JULIA_NUM_THREADS" not in os.environ:
+    import multiprocessing
+    # Default to all available threads
+    os.environ["JULIA_NUM_THREADS"] = str(multiprocessing.cpu_count())
 
 import time
 import numpy as np
@@ -16,6 +46,12 @@ try:
 except ImportError:
     PYSIGLIB_AVAILABLE = False
     print("WARNING: pySigLib not available, skipping comparison")
+
+
+def get_julia_thread_count() -> int:
+    """Get the number of threads Julia is using."""
+    from juliacall import Main as jl
+    return int(jl.Threads.nthreads())
 
 
 def generate_paths_chen(B: int, L: int, d: int, dtype=np.float64) -> np.ndarray:
@@ -50,7 +86,7 @@ def pysiglib_to_chen(result: np.ndarray) -> np.ndarray:
     return result.T
 
 
-def benchmark_and_compare(B: int, L: int, d: int, N: int, n_trials: int = 10):
+def benchmark_and_compare(B: int, L: int, d: int, N: int, n_trials: int = 10, n_jobs: int = None):
     """
     Benchmark both implementations and check for correctness.
 
@@ -60,9 +96,18 @@ def benchmark_and_compare(B: int, L: int, d: int, N: int, n_trials: int = 10):
         d: Dimension
         N: Truncation level
         n_trials: Number of benchmark trials
+        n_jobs: Number of threads for pySigLib (None = match Julia's thread count)
     """
+    # Get Julia's thread count for fair comparison
+    julia_threads = get_julia_thread_count()
+
+    # Default n_jobs to match Julia's thread count
+    if n_jobs is None:
+        n_jobs = julia_threads
+
     print(f"\n{'='*80}")
     print(f"Test case: B={B}, L={L}, d={d}, N={N}")
+    print(f"Threading: Julia={julia_threads} threads, pySigLib n_jobs={n_jobs}")
     print(f"{'='*80}")
 
     # Generate test data in ChenSignatures format (use float32 for pySigLib compatibility)
@@ -111,17 +156,17 @@ def benchmark_and_compare(B: int, L: int, d: int, N: int, n_trials: int = 10):
         return
 
     print(f"\n{'-'*80}")
-    print("pySigLib (CPU, parallel with n_jobs=-1):")
+    print(f"pySigLib (CPU, n_jobs={n_jobs}):")
     print(f"{'-'*80}")
 
     # Warmup
-    _ = pysiglib_signature(paths_pysig, N, n_jobs=-1)
+    _ = pysiglib_signature(paths_pysig, N, n_jobs=n_jobs)
 
     # Benchmark
     pysig_times = []
     for i in range(n_trials):
         t0 = time.perf_counter()
-        result_pysig = pysiglib_signature(paths_pysig, N, n_jobs=-1)
+        result_pysig = pysiglib_signature(paths_pysig, N, n_jobs=n_jobs)
         t1 = time.perf_counter()
         pysig_times.append(t1 - t0)
 
@@ -195,6 +240,26 @@ def main():
         print("\nERROR: pySigLib not available")
         print("Install with: pip install pysiglib")
         return
+
+    # Show threading configuration
+    julia_threads = get_julia_thread_count()
+    import multiprocessing
+    cpu_count = multiprocessing.cpu_count()
+
+    print(f"\nSystem info:")
+    print(f"  CPU cores: {cpu_count}")
+    print(f"  Julia threads: {julia_threads}")
+    print(f"  JULIA_NUM_THREADS env: {os.environ.get('JULIA_NUM_THREADS', 'not set')}")
+
+    # Warn if Julia threads don't match environment variable
+    env_threads = os.environ.get('JULIA_NUM_THREADS')
+    if env_threads and int(env_threads) != julia_threads:
+        print(f"\n  WARNING: Julia is using {julia_threads} threads but JULIA_NUM_THREADS={env_threads}")
+        print(f"  This means Julia was already initialized before the environment variable was set.")
+        print(f"  To change thread count, restart Python with JULIA_NUM_THREADS set beforehand.")
+        print(f"  Example: set JULIA_NUM_THREADS={env_threads} && python compare_pysiglib.py")
+
+    print(f"\nNote: Thread counts are matched between Julia and pySigLib for fair comparison")
 
     # Test cases from the reference paper + edge cases
     test_cases = [
