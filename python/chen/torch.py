@@ -32,40 +32,58 @@ class SigFunction(torch.autograd.Function):
         """
         Forward pass: compute signature and keep Zygote pullback alive.
         """
-        # Ensure contiguous Float64 array for Julia
-        path_np = np.ascontiguousarray(path.detach().cpu().numpy(), dtype=np.float64)
-        
+        # Preserve dtype: convert torch dtype to appropriate numpy dtype
+        if path.dtype == torch.float32:
+            np_dtype = np.float32
+        elif path.dtype == torch.float64:
+            np_dtype = np.float64
+        else:
+            # Default to float64 for other types
+            np_dtype = np.float64
+
+        # Ensure contiguous array with preserved dtype for Julia
+        path_np = np.ascontiguousarray(path.detach().cpu().numpy(), dtype=np_dtype)
+
         # 1. Call Zygote.pullback immediately.
         res_jl, back_jl = _sig_pullback_fn(path_np, m)
-        
-        # 2. Save the Julia 'back' closure in the context.
+
+        # 2. Save the Julia 'back' closure and dtype in the context.
         ctx.back_jl = back_jl
         ctx.device = path.device
-        
-        # 3. Return result as torch tensor
-        return torch.from_numpy(np.array(res_jl)).to(path.device)
+        ctx.dtype = path.dtype
+
+        # 3. Return result as torch tensor with original dtype
+        return torch.from_numpy(np.array(res_jl)).to(device=path.device, dtype=path.dtype)
     
     @staticmethod
     def backward(ctx, grad_output):
         """
         Backward pass: Invoke the pre-compiled Julia pullback.
         """
-        # Convert gradient to numpy
-        grad_output_np = np.ascontiguousarray(grad_output.detach().cpu().numpy(), dtype=np.float64)
-        
+        # Preserve dtype from forward pass
+        if ctx.dtype == torch.float32:
+            np_dtype = np.float32
+        elif ctx.dtype == torch.float64:
+            np_dtype = np.float64
+        else:
+            np_dtype = np.float64
+
+        # Convert gradient to numpy with preserved dtype
+        grad_output_np = np.ascontiguousarray(grad_output.detach().cpu().numpy(), dtype=np_dtype)
+
         # 1. Retrieve the Julia pullback closure
         back_jl = ctx.back_jl
-        
-        # 2. Call it. 
+
+        # 2. Call it.
         # back(dy) -> (d_path,)
         grads_tuple = back_jl(grad_output_np)
-        
+
         # 3. Extract the gradient for 'path'
         grad_path_jl = grads_tuple[0]
-        
-        # 4. Convert back to torch
-        grad_path_torch = torch.from_numpy(np.array(grad_path_jl)).to(ctx.device)
-        
+
+        # 4. Convert back to torch with original dtype
+        grad_path_torch = torch.from_numpy(np.array(grad_path_jl)).to(device=ctx.device, dtype=ctx.dtype)
+
         # Return gradients (None for m)
         return grad_path_torch, None
 
@@ -73,9 +91,14 @@ class SigFunction(torch.autograd.Function):
 def sig_torch(path, m):
     """
     Compute signature with PyTorch autograd support.
-    
+
     Args:
         path: torch.Tensor of shape (N, d)
+              Supports both float32 and float64 dtypes (preserved throughout)
         m: int, truncation level
+
+    Returns:
+        torch.Tensor: Signature of shape (d + d^2 + ... + d^m,)
+                     with same dtype and device as input
     """
     return SigFunction.apply(path, m)

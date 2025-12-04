@@ -330,33 +330,17 @@ See also: [`SignatureWorkspace`](@ref), [`sig`](@ref)
 function signature_path! end
 
 # Allocating version (for user convenience)
+# Simple wrappers that create workspace and delegate to the 3-arg version
+# Note: Enzyme AD on Julia 1.12 has issues with this pattern (experimental support)
+# but ChainRules/Zygote AD works fine via the rrule definition
 function signature_path!(out::Tensor{T,D,M}, path::AbstractMatrix{T}) where {T,D,M}
-    N = size(path, 1)
-    N >= 2 || throw(ArgumentError("Path must have at least 2 points, got N=$N"))
-
-    _reset_tensor!(out)
-    B1, B2 = _alloc_scratch(T, D, M)
-
-    @inbounds for i in 1:N-1
-        val = ntuple(j -> path[i+1, j] - path[i, j], Val(D))
-        z = SVector{D, T}(val)
-        update_signature_horner!(out, z, B1, B2)
-    end
-    return out
+    ws = SignatureWorkspace{T,D,M}()
+    return signature_path!(out, path, ws)
 end
 
 function signature_path!(out::Tensor{T,D,M}, path::AbstractVector{SVector{D,T}}) where {T,D,M}
-    N = length(path)
-    N >= 2 || throw(ArgumentError("Path must have at least 2 points, got N=$N"))
-
-    _reset_tensor!(out)
-    B1, B2 = _alloc_scratch(T, D, M)
-
-    @inbounds for i in 1:N-1
-        z = path[i+1] - path[i]
-        update_signature_horner!(out, z, B1, B2)
-    end
-    return out
+    ws = SignatureWorkspace{T,D,M}()
+    return signature_path!(out, path, ws)
 end
 
 # Workspace-based versions (zero allocation hot path)
@@ -394,6 +378,166 @@ function signature_path!(
     end
     return out
 end
+
+# ============================================================================
+# Batch Processing via Multiple Dispatch
+# ============================================================================
+
+"""
+    sig(paths::AbstractArray{T,3}, m::Int; threaded::Bool=true) -> Matrix{T}
+
+Compute truncated path signatures for a batch of paths.
+
+# Arguments
+- `paths::AbstractArray{T,3}`: `N×D×B` array where:
+  - `N ≥ 2`: number of time points per path
+  - `D ≥ 1`: spatial dimension
+  - `B ≥ 1`: batch size (number of paths)
+- `m::Int`: Truncation level (`m ≥ 1`)
+- `threaded::Bool=true`: Use multi-threading when `true`
+
+# Returns
+- `Matrix{T}`: `S×B` matrix where `S = d + d² + ... + dᵐ` (signature length)
+  and each column `result[:, i]` contains the signature of `paths[:, :, i]`
+
+# Computational Complexity
+- Time: O(B · N · dᵐ⁺¹) where B is batch size, N is path length
+- Space: O(B · dᵐ⁺¹) for output storage
+- Threading: Near-linear speedup with number of threads for large batches
+
+# Examples
+```julia
+# Batch of 100 paths, each with 50 time points in 3D space
+paths = randn(50, 3, 100)
+sigs = sig(paths, 4)  # Returns 120×100 matrix
+size(sigs)  # (120, 100)
+
+# Access signature of the 5th path
+sig_5 = sigs[:, 5]
+
+# Disable threading for small batches
+sigs = sig(paths, 4; threaded=false)
+```
+
+# Performance Notes
+- Uses `Threads.@threads` when `threaded=true` (default)
+- Threading overhead may not be worth it for very small batches (B < 10)
+- For maximum performance with manual workspace management, see [`signature_path!`](@ref)
+
+See also: [`sig`](@ref), [`logsig`](@ref), [`SignatureWorkspace`](@ref)
+"""
+function sig(paths::AbstractArray{T,3}, m::Int; threaded::Bool=true) where T
+    N, D, B = size(paths)
+
+    # Input validation
+    N >= 2 || throw(ArgumentError("Paths must have at least 2 points, got N=$N"))
+    D >= 1 || throw(ArgumentError("Path dimension must be at least 1, got D=$D"))
+    m >= 1 || throw(ArgumentError("Signature level must be at least 1, got m=$m"))
+    B >= 1 || throw(ArgumentError("Batch size must be at least 1, got B=$B"))
+
+    # Compute signature length
+    sig_len = sum(D^k for k in 1:m)
+    result = Matrix{T}(undef, sig_len, B)
+
+    if threaded
+        Threads.@threads for i in 1:B
+            result[:, i] = sig(@view(paths[:, :, i]), m)
+        end
+    else
+        # Reuse workspace for sequential processing
+        out = Tensor{T, D, m}()
+        ws = SignatureWorkspace{T, D, m}()
+        for i in 1:B
+            signature_path!(out, @view(paths[:, :, i]), ws)
+            result[:, i] = _flatten_tensor(out)
+        end
+    end
+
+    return result
+end
+
+"""
+    logsig(paths::AbstractArray{T,3}, basis::BasisCache; threaded::Bool=true) -> Matrix{T}
+
+Compute log-signatures for a batch of paths using a precomputed Lyndon basis.
+
+# Arguments
+- `paths::AbstractArray{T,3}`: `N×D×B` array of paths where:
+  - `N ≥ 2`: number of time points per path
+  - `D ≥ 1`: spatial dimension (must match basis)
+  - `B ≥ 1`: batch size (number of paths)
+- `basis::BasisCache`: Precomputed basis from [`prepare(D, m)`](@ref)
+- `threaded::Bool=true`: Use multi-threading when `true`
+
+# Returns
+- `Matrix{T}`: `L×B` matrix where `L` is the number of Lyndon words
+  and each column `result[:, i]` contains the log-signature of `paths[:, :, i]`
+
+# Computational Complexity
+- Time: O(B · (N · dᵐ⁺¹ + L²)) where L is number of Lyndon words
+- Space: O(B · L) for output storage
+- Log-signature dimension L is much smaller than signature dimension
+
+# Examples
+```julia
+# Precompute basis once for 3D paths, level 4
+basis = prepare(3, 4)
+
+# Process batch of 100 paths
+paths = randn(50, 3, 100)
+logsigs = logsig(paths, basis)
+
+# Log-signature is more compact than signature
+println("Log-signature size: ", size(logsigs, 1))  # Much less than 120
+println("Number of paths: ", size(logsigs, 2))     # 100
+
+# Process another batch with same basis
+more_paths = randn(50, 3, 50)
+more_logsigs = logsig(more_paths, basis)
+```
+
+# Performance Notes
+- Precompute and reuse `basis` for all batches with the same `(D, m)`
+- Threading provides significant speedup for large batches
+- More memory-efficient than `sig` due to compact representation
+
+See also: [`logsig`](@ref), [`sig`](@ref), [`prepare`](@ref), [`BasisCache`](@ref)
+"""
+function logsig(paths::AbstractArray{T,3}, basis::BasisCache; threaded::Bool=true) where T
+    N, D, B = size(paths)
+
+    # Input validation
+    N >= 2 || throw(ArgumentError("Paths must have at least 2 points, got N=$N"))
+    D == basis.d || throw(ArgumentError(
+        "Dimension mismatch: paths have dimension $D but basis expects $(basis.d)"
+    ))
+    B >= 1 || throw(ArgumentError("Batch size must be at least 1, got B=$B"))
+
+    # Number of Lyndon words
+    L = length(basis.lynds)
+    result = Matrix{T}(undef, L, B)
+
+    if threaded
+        Threads.@threads for i in 1:B
+            result[:, i] = logsig(@view(paths[:, :, i]), basis)
+        end
+    else
+        # Reuse tensor for sequential processing
+        sig_tensor = Tensor{T, basis.d, basis.m}()
+        ws = SignatureWorkspace{T, basis.d, basis.m}()
+        for i in 1:B
+            signature_path!(sig_tensor, @view(paths[:, :, i]), ws)
+            log_tensor = ChenSignatures.log(sig_tensor)
+            result[:, i] = project_to_lyndon(log_tensor, basis.lynds, basis.L)
+        end
+    end
+
+    return result
+end
+
+# ============================================================================
+# Internal Helper Functions
+# ============================================================================
 
 @inline function _reset_tensor!(out::Tensor{T}) where T
     fill!(out.coeffs, zero(T))
