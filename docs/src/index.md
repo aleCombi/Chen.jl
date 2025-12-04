@@ -10,7 +10,7 @@ This package efficiently computes:
 - **Batch processing**: Multi-threaded computation of multiple paths
 - **Automatic differentiation**: Full gradient support via ChainRulesCore and Enzyme
 
-Path signatures are widely used in time-series modeling, Neural CDEs, stochastic analysis, and feature engineering for sequential data.
+Path signatures are widely used in financial time series, Neural CDEs, stochastic analysis, and machine learning feature engineering.
 
 ---
 
