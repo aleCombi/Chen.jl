@@ -12,15 +12,12 @@ It provides state-of-the-art speed, sparse algebra support, and a clean API for 
 
 ## 📐 Overview
 
-Path signatures are sequences of iterated integrals that encode the geometric structure of a path.  
+Path signatures are sequences of iterated integrals that encode the geometric structure of a path.
 They form a powerful, coordinate-free representation used in:
 
-- time-series modelling  
-- machine learning (Neural CDEs, RNN augmentation)  
-- stochastic analysis  
-- control theory  
-- anomaly detection  
-- feature engineering  
+- financial time series and derivatives pricing
+- machine learning (Neural CDEs, feature engineering)
+- stochastic analysis and rough path theory  
 
 **ChenSignatures.jl** computes both **signatures** and **log-signatures** efficiently and accurately, with full support for dense and sparse tensor algebras.
 

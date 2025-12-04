@@ -108,11 +108,9 @@ logsig = chen.logsig(path, basis)
 
 ## Use Cases
 
-- Financial time series  
-- Sensor data and IoT  
-- Neural CDEs / differential ML  
-- Representation learning  
-- Anomaly detection  
+- Financial time series and derivatives pricing
+- Neural CDEs and machine learning
+- Feature engineering and representation learning  
 
 ---
 
