@@ -149,10 +149,10 @@ The repository includes:
 
 ## 🤝 Contributing
 
-Contributions welcome!  
-Open issues or pull requests here:
+Issues and feedback are welcome!
+However, pull requests are not being accepted at this time.
 
-👉 https://github.com/aleCombi/ChenSignatures.jl
+👉 https://github.com/aleCombi/ChenSignatures.jl/issues
 
 ## Version Management
 
