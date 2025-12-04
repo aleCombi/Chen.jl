@@ -185,3 +185,4 @@ datasets/
 
 # Claude AI files
 .claude/
+claude.md
