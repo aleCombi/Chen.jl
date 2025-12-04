@@ -58,34 +58,57 @@ jl.seval("using ChenSignatures")
 # Public API
 # ============================================================================
 
-def sig(path, m: int) -> np.ndarray:
+def sig(path, m: int, threaded: bool = True) -> np.ndarray:
     """
-    Compute the truncated signature of the path up to level m.
+    Compute the truncated signature of a path or batch of paths up to level m.
 
     Args:
-        path: (N, d) array-like input where N is path length, d is dimension
-        m: truncation level (must be positive integer)
+        path: Array-like input of shape:
+            - (N, d): Single path where N is path length, d is dimension
+            - (N, d, B): Batch of B paths (uses multi-threading by default)
+        m: Truncation level (must be positive integer)
+        threaded: If True (default), use multi-threading for batch processing.
+                 Ignored for single path input.
 
     Returns:
-        (d + d^2 + ... + d^m,) flattened array of signature coefficients
+        - Single path (N, d): Returns (d + d^2 + ... + d^m,) array
+        - Batch (N, d, B): Returns (d + d^2 + ... + d^m, B) array where
+          each column is the signature of one path
 
     Examples:
         >>> import chen
         >>> import numpy as np
+
+        # Single path
         >>> path = np.random.randn(100, 3)
         >>> signature = chen.sig(path, m=4)
         >>> signature.shape
         (120,)  # 3 + 9 + 27 + 81
 
+        # Batch of paths (with float32)
+        >>> paths = np.random.randn(100, 3, 50).astype(np.float32)
+        >>> signatures = chen.sig(paths, m=4, threaded=True)
+        >>> signatures.shape
+        (120, 50)  # (sig_length, batch_size)
+
     Raises:
         ValueError: If path has fewer than 2 points or m is not positive
     """
-    # Ensure contiguous float64 array (Julia's default float type)
-    arr = np.ascontiguousarray(path, dtype=np.float64)
-    
-    # Call Julia function
-    res = jl.ChenSignatures.sig(arr, m)
-    
+    # Convert to numpy array and preserve float dtype (float32/float64)
+    arr = np.asarray(path)
+
+    # Default to float64 for integer or non-float types
+    if not np.issubdtype(arr.dtype, np.floating):
+        arr = arr.astype(np.float64)
+
+    # Ensure contiguous memory layout
+    arr = np.ascontiguousarray(arr)
+
+    # Call Julia function (dispatch handles 2D vs 3D)
+    # Only pass threaded kwarg for batch (3D) case
+    kwargs = {"threaded": threaded} if arr.ndim == 3 else {}
+    res = jl.ChenSignatures.sig(arr, m, **kwargs)
+
     # Convert back to numpy
     return np.asarray(res)
 
@@ -118,29 +141,64 @@ def prepare_logsig(d: int, m: int):
     return jl.ChenSignatures.prepare(d, m)
 
 
-def logsig(path, basis) -> np.ndarray:
+def logsig(path, basis, threaded: bool = True) -> np.ndarray:
     """
-    Compute the log-signature of a path using a precomputed basis.
+    Compute the log-signature of a path or batch of paths using a precomputed basis.
 
-    This wraps the Julia function:
+    This wraps the Julia functions:
         ChenSignatures.logsig(path::AbstractMatrix, basis::BasisCache)
+        ChenSignatures.logsig(paths::AbstractArray{T,3}, basis::BasisCache)
 
     It is analogous to `iisignature.logsig(path, prep)`, where `basis` is the
     result of `prepare_logsig(d, m)`.
 
     Args:
-        path: (N, d) array-like input where N is path length, d is dimension.
+        path: Array-like input of shape:
+            - (N, d): Single path where N is path length, d is dimension
+            - (N, d, B): Batch of B paths (uses multi-threading by default)
         basis: Basis object returned by `prepare_logsig(d, m)` (a Julia `BasisCache`).
+        threaded: If True (default), use multi-threading for batch processing.
+                 Ignored for single path input.
 
     Returns:
-        1D numpy array of log-signature coefficients (flattened Lyndon basis projection).
-    """
-    # Convert to contiguous float64 2D array
-    arr = np.ascontiguousarray(path, dtype=np.float64)
-    if arr.ndim != 2:
-        raise ValueError(f"`path` must be 2D (N, d); got shape {arr.shape}")
+        - Single path (N, d): Returns (L,) array of log-signature coefficients
+        - Batch (N, d, B): Returns (L, B) array where each column is the
+          log-signature of one path (L = number of Lyndon words)
 
-    d = arr.shape[1]
+    Examples:
+        >>> import chen
+        >>> import numpy as np
+
+        # Single path
+        >>> path = np.random.randn(100, 3)
+        >>> basis = chen.prepare_logsig(3, 4)
+        >>> logsig = chen.logsig(path, basis)
+        >>> logsig.shape
+        (18,)  # Much more compact than sig (18 vs 120)
+
+        # Batch of paths (with float32)
+        >>> paths = np.random.randn(100, 3, 50).astype(np.float32)
+        >>> logsigs = chen.logsig(paths, basis, threaded=True)
+        >>> logsigs.shape
+        (18, 50)  # (num_lyndon_words, batch_size)
+    """
+    # Convert to numpy array and preserve float dtype (float32/float64)
+    arr = np.asarray(path)
+
+    # Default to float64 for integer or non-float types
+    if not np.issubdtype(arr.dtype, np.floating):
+        arr = arr.astype(np.float64)
+
+    # Ensure contiguous memory layout
+    arr = np.ascontiguousarray(arr)
+
+    # Validate dimensions
+    if arr.ndim == 2:
+        d = arr.shape[1]
+    elif arr.ndim == 3:
+        d = arr.shape[1]
+    else:
+        raise ValueError(f"`path` must be 2D (N, d) or 3D (N, d, B); got shape {arr.shape}")
 
     # Sanity check: match Python path dimension with Julia BasisCache.d if available
     basis_d = getattr(basis, "d", None)
@@ -150,9 +208,10 @@ def logsig(path, basis) -> np.ndarray:
             "Did you call prepare_logsig with the correct dimension?"
         )
 
-    # Call Julia:
-    #   function logsig(path::AbstractMatrix{T}, basis::BasisCache)::Vector{T}
-    res = jl.ChenSignatures.logsig(arr, basis)
+    # Call Julia function (dispatch handles 2D vs 3D)
+    # Only pass threaded kwarg for batch (3D) case
+    kwargs = {"threaded": threaded} if arr.ndim == 3 else {}
+    res = jl.ChenSignatures.logsig(arr, basis, **kwargs)
 
     # Convert Julia vector to numpy array
     return np.asarray(res)

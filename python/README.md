@@ -147,4 +147,6 @@ logsig = chen.logsig(path, basis)
 
 ## Contributing
 
-https://github.com/aleCombi/ChenSignatures.jl
+Issues and feedback are welcome at https://github.com/aleCombi/ChenSignatures.jl/issues
+
+However, pull requests are not being accepted at this time.

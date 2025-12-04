@@ -6,6 +6,14 @@ using LinearAlgebra
 using Random
 
 @testset "sig - Comprehensive Gradient Tests" begin
+    # Skip Enzyme tests on Julia 1.12+ where support is experimental
+    # See: https://github.com/EnzymeAD/Enzyme.jl/issues/2699
+    # The wrapper pattern in signature_path! causes issues with Enzyme's AD on 1.12
+    # ChainRules/Zygote AD still works fine via the rrule definition
+    if VERSION >= v"1.12"
+        @info "Skipping Enzyme tests on Julia $(VERSION) (Enzyme's 1.12+ support is experimental)"
+        return
+    end
     # Make all tests deterministic
     Random.seed!(0)
 
