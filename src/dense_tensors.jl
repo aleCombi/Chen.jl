@@ -36,45 +36,45 @@ t = Tensor{Float64, 3, 4}(coeffs)
 
 See also: [`sig`](@ref), [`signature_path`](@ref), [`SignatureWorkspace`](@ref)
 """
-struct Tensor{T,D,M} <: AbstractTensor{T}
-    coeffs::Vector{T}
+struct Tensor{T,D,M,V<:AbstractVector{T}} <: AbstractTensor{T}
+    coeffs::V
     offsets::Vector{Int}
 end
 
-dim(::Tensor{T,D,M}) where {T,D,M} = D
-level(::Tensor{T,D,M}) where {T,D,M} = M
+dim(::Tensor{T,D,M,V}) where {T,D,M,V} = D
+level(::Tensor{T,D,M,V}) where {T,D,M,V} = M
 
 Base.parent(ts::Tensor) = ts.coeffs
 coeffs(ts::Tensor) = ts.coeffs
 offsets(ts::Tensor) = ts.offsets
 
-Base.eltype(::Tensor{T,D,M}) where {T,D,M} = T
+Base.eltype(::Tensor{T,D,M,V}) where {T,D,M,V} = T
 Base.length(ts::Tensor) = length(ts.coeffs)
 @inline Base.getindex(ts::Tensor, i::Int) = @inbounds ts.coeffs[i]
 @inline Base.setindex!(ts::Tensor, v, i::Int) = @inbounds (ts.coeffs[i] = v)
 
-Base.show(io::IO, ts::Tensor{T,D,M}) where {T,D,M} =
-    print(io, "Tensor{T=$T, D=$D, M=$M}(length=$(length(ts.coeffs)))")
+Base.show(io::IO, ts::Tensor{T,D,M,V}) where {T,D,M,V} =
+    print(io, "Tensor{T=$T, D=$D, M=$M, V=$V}(length=$(length(ts.coeffs)))")
 
 function Tensor{T,D,M}() where {T,D,M}
     offsets = level_starts0(D, M)
-    coeffs  = zeros(T, offsets[end]) 
-    return Tensor{T,D,M}(coeffs, offsets)
+    coeffs  = zeros(T, offsets[end])
+    return Tensor{T,D,M,typeof(coeffs)}(coeffs, offsets)
 end
 
-function Tensor{T,D,M}(coeffs::Vector{T}) where {T,D,M}
+function Tensor{T,D,M}(coeffs::V) where {T,D,M,V<:AbstractVector{T}}
     offsets = level_starts0(D, M)
     @assert length(coeffs) == offsets[end] "Coefficient length mismatch"
-    return Tensor{T,D,M}(coeffs, offsets)
+    return Tensor{T,D,M,V}(coeffs, offsets)
 end
 
-Base.similar(ts::Tensor{T,D,M}) where {T,D,M} = Tensor{T,D,M}()
-Base.similar(ts::Tensor{T,D,M}, ::Type{S}) where {T,D,M,S} = Tensor{S,D,M}()
+Base.similar(ts::Tensor{T,D,M,V}) where {T,D,M,V} = Tensor{T,D,M}(similar(ts.coeffs))
+Base.similar(ts::Tensor{T,D,M,V}, ::Type{S}) where {T,D,M,V,S} = Tensor{S,D,M}()
 
-Base.copy(ts::Tensor{T,D,M}) where {T,D,M} = 
-    Tensor{T,D,M}(copy(ts.coeffs), ts.offsets)
+Base.copy(ts::Tensor{T,D,M,V}) where {T,D,M,V} =
+    Tensor{T,D,M}(copy(ts.coeffs))
 
-function Base.copy!(dest::Tensor{T,D,M}, src::Tensor{T,D,M}) where {T,D,M}
+function Base.copy!(dest::Tensor{T,D,M,V1}, src::Tensor{T,D,M,V2}) where {T,D,M,V1,V2}
     copyto!(dest.coeffs, src.coeffs)
     return dest
 end
@@ -107,7 +107,7 @@ end
     return t
 end
 
-@inline function add_scaled!(dest::Tensor{T,D,M}, src::Tensor{T,D,M}, α::T) where {T,D,M}
+@inline function add_scaled!(dest::Tensor{T,D,M,V1}, src::Tensor{T,D,M,V2}, α::T) where {T,D,M,V1,V2}
     off = dest.offsets
 
     # Level 0
@@ -127,10 +127,10 @@ end
 end
 
 @inline function mul!(
-    out_tensor::Tensor{T,D,M}, 
-    x1_tensor::Tensor{T,D,M}, 
-    x2_tensor::Tensor{T,D,M}
-) where {T,D,M}
+    out_tensor::Tensor{T,D,M,V1},
+    x1_tensor::Tensor{T,D,M,V2},
+    x2_tensor::Tensor{T,D,M,V3}
+) where {T,D,M,V1,V2,V3}
     out = out_tensor.coeffs
     x1  = x1_tensor.coeffs
     x2  = x2_tensor.coeffs
@@ -193,7 +193,7 @@ end
     return out_tensor
 end
 
-function log!(out::Tensor{T,D,M}, g::Tensor{T,D,M}) where {T,D,M}
+function log!(out::Tensor{T,D,M,V1}, g::Tensor{T,D,M,V2}) where {T,D,M,V1,V2}
     i0 = out.offsets[1] + 1
     X = similar(out); copy!(X, g); X.coeffs[i0] -= one(T)
     _zero!(out); P = similar(out); copy!(P, X); Q = similar(out)
@@ -209,12 +209,12 @@ function log!(out::Tensor{T,D,M}, g::Tensor{T,D,M}) where {T,D,M}
     return out
 end
 
-function log(g::Tensor{T,D,M}) where {T,D,M}
+function log(g::Tensor{T,D,M,V}) where {T,D,M,V}
     out = similar(g)
     return log!(out, g)
 end
 
-@inline function exp!(out::Tensor{T,D,M}, x::SVector{D,T}) where {T,D,M}
+@inline function exp!(out::Tensor{T,D,M,V}, x::SVector{D,T}) where {T,D,M,V}
     coeffs = out.coeffs
     off = out.offsets
 
@@ -245,11 +245,11 @@ end
 end
 
 function update_signature_horner!(
-    A_tensor::Tensor{T,D,M}, 
-    z::SVector{D,T}, 
-    B1::Vector{T},
-    B2::Vector{T}
-) where {T,D,M}
+    A_tensor::Tensor{T,D,M,V1},
+    z::SVector{D,T},
+    B1::V2,
+    B2::V3
+) where {T,D,M,V1<:AbstractVector{T},V2<:AbstractVector{T},V3<:AbstractVector{T}}
     coeffs = A_tensor.coeffs
     off = level_starts0(D, M)
     
