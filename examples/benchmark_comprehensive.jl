@@ -6,6 +6,35 @@ using ChenSignatures
 using Random
 using Printf
 using Dates
+using BenchmarkTools
+const BENCH_SECONDS = 0.2   # target time budget per benchmarked expression
+const BENCH_SAMPLES = 20    # number of independent samples (min over samples is reported)
+const BENCH_EVALS   = 1     # evaluations per sample (keep 1 to avoid extra GPU/CPU work per sample)
+const RECOMMENDED_THREADS = max(Threads.nthreads(), Sys.CPU_THREADS)
+const MULTITHREAD_ENABLED = Threads.nthreads() > 1
+const TARGET_THREADS = get(ENV, "BENCH_THREADS", "")
+
+# Optional self-reexec with a requested thread count (set BENCH_THREADS=N)
+if TARGET_THREADS != ""
+    requested = tryparse(Int, TARGET_THREADS)
+    if requested === nothing || requested < 1
+        @warn "Ignoring invalid BENCH_THREADS=$TARGET_THREADS (must be positive integer)"
+    elseif Threads.nthreads() != requested
+        if get(ENV, "BENCH_ALREADY_REEXEC", "") == "1"
+            @warn "Requested BENCH_THREADS=$requested but process already re-execed; continuing with Threads=$(Threads.nthreads())"
+        elseif isnothing(Base.julia_cmd())
+            @warn "Cannot re-exec Julia automatically; please rerun with JULIA_NUM_THREADS=$requested"
+        else
+            env = copy(ENV)
+            cmd = Base.julia_cmd()
+            withenv("JULIA_NUM_THREADS" => string(requested),
+                    "BENCH_ALREADY_REEXEC" => "1") do
+                run(`$cmd --project=$(Base.active_project()) $(PROGRAM_FILE)`)
+            end
+            exit(0)
+        end
+    end
+end
 
 # ============================================================================
 # Helper Functions
@@ -25,7 +54,7 @@ function print_table_header()
 end
 
 function run_benchmark(D, M, N, B; warmup=true)
-    # Generate data
+    # Generate data once (outside timings)
     paths_cpu = randn(Float32, N, D, B)
     paths_gpu = CuArray(paths_cpu)
 
@@ -37,21 +66,30 @@ function run_benchmark(D, M, N, B; warmup=true)
         CUDA.synchronize()
     end
 
+    # Sample outputs (not timed) for correctness check
+    sigs_cpu = sig(paths_cpu, M; threaded=false)
+    sigs_cpu_mt = sig(paths_cpu, M; threaded=true)
+    sigs_gpu = sig_batch_gpu(paths_gpu, M)
+    CUDA.synchronize()
+
     # Benchmark CPU single-threaded
-    cpu_single_time = @elapsed begin
-        sigs_cpu = sig(paths_cpu, M; threaded=false)
+    cpu_single_trial = @benchmark sig($paths_cpu, $M; threaded=false) seconds=BENCH_SECONDS samples=BENCH_SAMPLES evals=BENCH_EVALS
+    cpu_single_time = minimum(cpu_single_trial).time / 1e9
+
+    # Benchmark CPU multi-threaded (only meaningful if Threads.nthreads() > 1)
+    if MULTITHREAD_ENABLED
+        cpu_threaded_trial = @benchmark sig($paths_cpu, $M; threaded=true) seconds=BENCH_SECONDS samples=BENCH_SAMPLES evals=BENCH_EVALS
+        cpu_threaded_time = minimum(cpu_threaded_trial).time / 1e9
+    else
+        cpu_threaded_time = cpu_single_time
     end
 
-    # Benchmark CPU multi-threaded
-    cpu_threaded_time = @elapsed begin
-        sigs_cpu_mt = sig(paths_cpu, M; threaded=true)
-    end
-
-    # Benchmark GPU
-    gpu_time = @elapsed begin
-        sigs_gpu = sig_batch_gpu(paths_gpu, M)
+    # Benchmark GPU (synchronize to include kernel time)
+    gpu_trial = @benchmark begin
+        sig_batch_gpu($paths_gpu, $M)
         CUDA.synchronize()
-    end
+    end seconds=BENCH_SECONDS samples=BENCH_SAMPLES evals=BENCH_EVALS
+    gpu_time = minimum(gpu_trial).time / 1e9
 
     speedup_single = cpu_single_time / gpu_time
     speedup_threaded = cpu_threaded_time / gpu_time
@@ -88,6 +126,9 @@ println("System Information:")
 println("  GPU: $(CUDA.name(CUDA.device()))")
 println("  CUDA Cores: 1920")  # RTX 2060 Max-Q
 println("  Julia Threads: $(Threads.nthreads())")
+if !MULTITHREAD_ENABLED && RECOMMENDED_THREADS > 1
+    println("  Note: Multithreading disabled (JULIA_NUM_THREADS=1). For meaningful CPU-MT results, rerun with JULIA_NUM_THREADS=$(RECOMMENDED_THREADS).")
+end
 println()
 
 # ============================================================================
@@ -190,12 +231,6 @@ println("Best Configuration (vs Single-Thread CPU):")
 @printf "  Speedup vs CPU-1T: %.2fx, vs CPU-MT: %.2fx\n" best_config_single.speedup_single best_config_single.speedup_threaded
 println()
 
-println("Key Insights:")
-println("  • GPU excels at large batch sizes (>5000 paths)")
-println("  • Speedup increases with higher dimensions and levels")
-println("  • Longer paths provide more work per thread, improving efficiency")
-println("  • Peak performance at batch sizes that fully utilize GPU cores")
-println()
 
 print_header("Benchmark Complete")
 
@@ -280,12 +315,6 @@ open(output_file, "w") do io
     @printf io "  Batch=%d, D=%d, M=%d, N=%d\n" best_config_single.B best_config_single.D best_config_single.M best_config_single.N
     @printf io "  CPU-1T: %.2f ms, CPU-MT: %.2f ms, GPU: %.2f ms\n" (best_config_single.cpu_single_time*1000) (best_config_single.cpu_threaded_time*1000) (best_config_single.gpu_time*1000)
     @printf io "  Speedup vs CPU-1T: %.2fx, vs CPU-MT: %.2fx\n" best_config_single.speedup_single best_config_single.speedup_threaded
-    println(io)
-    println(io, "Key Insights:")
-    println(io, "  • GPU excels at large batch sizes (>5000 paths)")
-    println(io, "  • Best performance at D=2, M=2-4")
-    println(io, "  • GPU speedup increases with batch size")
-    println(io, "  • Multi-threaded CPU is competitive for small batches")
     println(io)
 end
 
