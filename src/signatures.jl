@@ -1,7 +1,7 @@
 using LinearAlgebra
 using StaticArrays
 
-export sig, prepare, logsig, signature_path, SignatureWorkspace, BasisCache
+export sig, prepare, logsig, signature_path, SignatureWorkspace, BasisCache, rolling_sig
 
 # ============================================================================
 # Workspace Preallocation
@@ -533,6 +533,55 @@ function logsig(paths::AbstractArray{T,3}, basis::BasisCache; threaded::Bool=tru
     end
 
     return result
+end
+
+"""
+    rolling_sig(path::AbstractMatrix, m::Int, window_size::Int; stride::Int=1, threaded::Bool=true) -> Matrix
+
+Compute truncated path signatures over rolling windows of a time series path using the batched `sig` kernel.
+
+# Arguments
+- `path::AbstractMatrix{T}`: `N×d` matrix (`N ≥ 2`, `d ≥ 1`).
+- `m::Int`: Truncation level (`m ≥ 1`).
+- `window_size::Int`: Points per window (`2 ≤ window_size ≤ N`).
+- `stride::Int=1`: Step between consecutive windows.
+- `threaded::Bool=true`: Use the threaded batched `sig` implementation.
+
+# Returns
+- `Matrix{T}` with shape `(d + d^2 + … + d^m, num_windows)` where `num_windows = div(N - window_size, stride) + 1`.
+
+# Notes
+- Windows are aligned from the start; if (N - window_size) is not divisible by stride,
+  trailing points are dropped rather than forcing a partial window at the end.
+"""
+function rolling_sig(
+    path::AbstractMatrix{T},
+    m::Int,
+    window_size::Int;
+    stride::Int = 1,
+    threaded::Bool = true,
+) where T
+    N, D = size(path)
+
+    # Validation
+    N >= 2 || throw(ArgumentError("Path must have at least 2 points, got N=$N"))
+    D >= 1 || throw(ArgumentError("Path dimension must be at least 1, got D=$D"))
+    m >= 1 || throw(ArgumentError("Signature level must be at least 1, got m=$m"))
+    window_size >= 2 || throw(ArgumentError("Window size must be at least 2, got window_size=$window_size"))
+    window_size <= N || throw(ArgumentError("Window size ($window_size) cannot exceed path length ($N)"))
+    stride >= 1 || throw(ArgumentError("Stride must be at least 1, got stride=$stride"))
+
+    num_windows = div(N - window_size, stride) + 1
+
+    # Build a 3D batch of windows and reuse the batched sig implementation
+    windows = Array{T}(undef, window_size, D, num_windows)
+    for i in 1:num_windows
+        start_idx = 1 + (i - 1) * stride
+        end_idx = start_idx + window_size - 1
+        @views windows[:, :, i] .= path[start_idx:end_idx, :]
+    end
+
+    return sig(windows, m; threaded=threaded)
 end
 
 # ============================================================================

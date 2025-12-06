@@ -217,6 +217,38 @@ def logsig(path, basis, threaded: bool = True) -> np.ndarray:
     return np.asarray(res)
 
 
+def rolling_sig(path, m: int, window_size: int, *, stride: int = 1, threaded: bool = True) -> np.ndarray:
+    """
+    Compute signatures over rolling windows using the batched Julia kernel.
+
+    Args:
+        path: Array-like of shape (N, d).
+        m: Truncation level (positive integer).
+        window_size: Window length (2 <= window_size <= N).
+        stride: Step between windows (default 1).
+        threaded: If True (default), use the threaded batched implementation.
+
+    Returns:
+        Array of shape (sig_dim, num_windows) where sig_dim = d + ... + d^m.
+    """
+    arr = np.asarray(path)
+    if arr.ndim != 2:
+        raise ValueError(f"`path` must be 2D (N, d); got shape {arr.shape}")
+
+    if not np.issubdtype(arr.dtype, np.floating):
+        arr = arr.astype(np.float64)
+    arr = np.ascontiguousarray(arr)
+
+    res = jl.ChenSignatures.rolling_sig(
+        arr,
+        int(m),
+        int(window_size),
+        stride=int(stride),
+        threaded=bool(threaded),
+    )
+    return np.asarray(res)
+
+
 # ============================================================================
 # Package metadata
 # ============================================================================
@@ -226,4 +258,5 @@ __all__ = [
     'sig',
     'logsig',
     'prepare_logsig',
+    'rolling_sig',
 ]
