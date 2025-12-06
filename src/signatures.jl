@@ -549,6 +549,10 @@ Compute truncated path signatures over rolling windows of a time series path usi
 
 # Returns
 - `Matrix{T}` with shape `(d + d^2 + … + d^m, num_windows)` where `num_windows = div(N - window_size, stride) + 1`.
+
+# Notes
+- Windows are aligned from the start; if (N - window_size) is not divisible by stride,
+  trailing points are dropped rather than forcing a partial window at the end.
 """
 function rolling_sig(
     path::AbstractMatrix{T},
