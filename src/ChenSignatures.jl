@@ -38,3 +38,5 @@ export BasisCache          # Cached Lyndon basis data for logsig
 #
 # GPU acceleration (requires KernelAbstractions.jl + GPU backend):
 export sig_batch_gpu       # GPU-accelerated batch signature computation
+
+end # module ChenSignatures
