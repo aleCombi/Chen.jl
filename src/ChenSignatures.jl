@@ -24,6 +24,7 @@ include("chain_rules.jl")
 export sig          # Compute truncated path signature (returns flattened vector)
 export logsig       # Compute log-signature projected onto Lyndon basis
 export prepare      # Precompute Lyndon basis for log-signature computations
+export rolling_sig  # Compute signatures over rolling windows of a time series path
 #
 # Core types and lower-level API:
 export Tensor              # Dense tensor algebra representation
