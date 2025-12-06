@@ -3,7 +3,120 @@
 
 using KernelAbstractions
 
-# Shared GPU helpers to avoid duplicating Horner/flatten logic in kernels.
+# Shared body used by both global-memory and shared-memory kernels.
+@inline function _sig_batch_kernel_body!(
+    results,
+    paths,
+    offsets,
+    ws_B1,
+    ws_B2,
+    tensor_coeffs_all,
+    inv_level,
+    ::Val{D},
+    ::Val{M},
+    batch_idx,
+    ws_col_idx
+) where {D,M}
+    B = size(paths, 3)
+    if batch_idx > B
+        return nothing
+    end
+
+    T = eltype(paths)
+    N = size(paths, 1)
+    tensor_len = offsets[end]
+
+    @inbounds begin
+        # Initialize tensor to identity (level 0 = 1, rest = 0)
+        for i in 1:tensor_len
+            tensor_coeffs_all[i, batch_idx] = zero(T)
+        end
+        tensor_coeffs_all[offsets[1] + 1, batch_idx] = one(T)
+
+        # Process path increments
+        for i in 1:(N-1)
+            # Precompute increment z = path[i+1] - path[i] ONCE
+            # Store in tuple (compile-time known size D)
+            z = ntuple(d -> paths[i+1, d, batch_idx] - paths[i, d, batch_idx], Val(D))
+
+            # Horner update for levels M down to 2
+            for k in M:-1:2
+                inv_k = inv_level[k]  # Precomputed 1/k
+
+                # Initialize B1 with z * inv_k
+                for d in 1:D
+                    ws_B1[d, ws_col_idx] = z[d] * inv_k
+                end
+
+                current_len = D
+
+                # Inner iterations
+                for iter in 1:(k-2)
+                    inv_next = inv_level[k - iter]  # Precomputed 1/(k-iter)
+                    a_start = offsets[iter + 1]
+
+                    # Choose source/destination buffers
+                    src_is_B1 = isodd(iter)
+
+                    for r in 1:current_len
+                        src_val = src_is_B1 ? ws_B1[r, ws_col_idx] : ws_B2[r, ws_col_idx]
+                        coeff_val = tensor_coeffs_all[a_start + r, batch_idx]
+                        val = src_val + coeff_val
+                        scaled = val * inv_next
+
+                        base_idx = (r - 1) * D
+                        @inbounds for d in 1:D
+                            idx = base_idx + d
+                            if src_is_B1
+                                ws_B2[idx, ws_col_idx] = scaled * z[d]
+                            else
+                                ws_B1[idx, ws_col_idx] = scaled * z[d]
+                            end
+                        end
+                    end
+
+                    current_len *= D
+                end
+
+                # Final iteration
+                last_iter_count = k - 2
+                use_B2 = (last_iter_count > 0 && isodd(last_iter_count))
+                a_prev_start = offsets[k]
+                a_tgt_start = offsets[k + 1]
+
+                for r in 1:current_len
+                    src_val = use_B2 ? ws_B2[r, ws_col_idx] : ws_B1[r, ws_col_idx]
+                    coeff_val = tensor_coeffs_all[a_prev_start + r, batch_idx]
+                    val = src_val + coeff_val
+
+                    base_idx = (r - 1) * D
+                    @inbounds for d in 1:D
+                        idx = a_tgt_start + base_idx + d
+                        tensor_coeffs_all[idx, batch_idx] += val * z[d]
+                    end
+                end
+            end
+
+            # Level 1 update
+            start_1 = offsets[2]
+            for d in 1:D
+                tensor_coeffs_all[start_1 + d, batch_idx] += z[d]
+            end
+        end
+
+        # Flatten tensor to result (remove padding)
+        idx_out = 1
+        for k in 1:M
+            start_offset = offsets[k + 1]
+            len = D^k
+            for j in 1:len
+                results[idx_out, batch_idx] = tensor_coeffs_all[start_offset + j, batch_idx]
+                idx_out += 1
+            end
+        end
+    end
+    return nothing
+end
 
 # ============================================================================
 # GPU Kernels
@@ -21,28 +134,19 @@ using KernelAbstractions
     ::Val{M}
 ) where {D, M}
     batch_idx = @index(Global, Linear)
-    B = size(paths, 3)
-
-    if batch_idx <= B
-        T = eltype(paths)
-        N = size(paths, 1)
-        tensor_len = offsets[end]
-
-        # Initialize tensor to identity (level 0 = 1, rest = 0)
-        @inbounds for i in 1:tensor_len
-            tensor_coeffs_all[i, batch_idx] = zero(T)
-        end
-        @inbounds tensor_coeffs_all[offsets[1] + 1, batch_idx] = one(T)
-
-        # Process path increments
-        @inbounds for i in 1:(N-1)
-            z = ntuple(d -> paths[i+1, d, batch_idx] - paths[i, d, batch_idx], Val(D))
-            _horner_update_core!(tensor_coeffs_all, ws_B1_all, ws_B2_all, offsets, inv_level, z, Val(D), Val(M), batch_idx, batch_idx)
-        end
-
-        # Flatten tensor to result (remove padding)
-        _flatten_tensor_core!(results, tensor_coeffs_all, offsets, Val(D), Val(M), batch_idx)
-    end
+    _sig_batch_kernel_body!(
+        results,
+        paths,
+        offsets,
+        ws_B1_all,
+        ws_B2_all,
+        tensor_coeffs_all,
+        inv_level,
+        Val(D),
+        Val(M),
+        batch_idx,
+        batch_idx
+    )
 end
 
 # ============================================================================
@@ -69,29 +173,25 @@ end
 
     if batch_idx <= B
         T = eltype(paths)
-        N = size(paths, 1)
-        tensor_len = offsets[end]
-
         # Allocate shared memory for workgroup
         # Each thread gets its own column: ws_*_shared[:, local_idx]
         workgroup_size = @uniform @groupsize()[1]
         ws_B1_shared = @localmem T (WS_LEN, workgroup_size)
         ws_B2_shared = @localmem T (WS_LEN, workgroup_size)
 
-        # Initialize tensor to identity (level 0 = 1, rest = 0)
-        @inbounds for i in 1:tensor_len
-            tensor_coeffs_all[i, batch_idx] = zero(T)
-        end
-        @inbounds tensor_coeffs_all[offsets[1] + 1, batch_idx] = one(T)
-
-        # Process path increments
-        @inbounds for i in 1:(N-1)
-            z = ntuple(d -> paths[i+1, d, batch_idx] - paths[i, d, batch_idx], Val(D))
-            _horner_update_core!(tensor_coeffs_all, ws_B1_shared, ws_B2_shared, offsets, inv_level, z, Val(D), Val(M), batch_idx, local_idx)
-        end
-
-        # Flatten tensor to result (remove padding)
-        _flatten_tensor_core!(results, tensor_coeffs_all, offsets, Val(D), Val(M), batch_idx)
+        _sig_batch_kernel_body!(
+            results,
+            paths,
+            offsets,
+            ws_B1_shared,
+            ws_B2_shared,
+            tensor_coeffs_all,
+            inv_level,
+            Val(D),
+            Val(M),
+            batch_idx,
+            local_idx
+        )
     end
 end
 

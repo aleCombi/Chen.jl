@@ -107,98 +107,6 @@ end
     return t
 end
 
-@inline function _flatten_tensor_core!(
-    results::AbstractMatrix{T},
-    tensor_coeffs_all::AbstractMatrix{T},
-    offsets::AbstractVector{Int},
-    ::Val{D},
-    ::Val{M},
-    col_idx::Int
-) where {D,M,T}
-    idx_out = 1
-    @inbounds for k in 1:M
-        start_offset = offsets[k + 1]
-        len = D^k
-        for j in 1:len
-            results[idx_out, col_idx] = tensor_coeffs_all[start_offset + j, col_idx]
-            idx_out += 1
-        end
-    end
-    return nothing
-end
-
-@inline function _horner_update_core!(
-    tensor_coeffs_all::AbstractMatrix{T},
-    ws_B1::AbstractMatrix{T},
-    ws_B2::AbstractMatrix{T},
-    offsets::AbstractVector{Int},
-    inv_level::AbstractVector{T},
-    z::NTuple{D,T},
-    ::Val{D},
-    ::Val{M},
-    coeff_col_idx::Int,
-    ws_col_idx::Int
-) where {D,M,T}
-    @inbounds begin
-        for k in M:-1:2
-            inv_k = inv_level[k]
-            for d in 1:D
-                ws_B1[d, ws_col_idx] = z[d] * inv_k
-            end
-
-            current_len = D
-
-            for iter in 1:(k-2)
-                inv_next = inv_level[k - iter]
-                a_start = offsets[iter + 1]
-                src_is_B1 = isodd(iter)
-
-                for r in 1:current_len
-                    src_val = src_is_B1 ? ws_B1[r, ws_col_idx] : ws_B2[r, ws_col_idx]
-                    coeff_val = tensor_coeffs_all[a_start + r, coeff_col_idx]
-                    val = src_val + coeff_val
-                    scaled = val * inv_next
-
-                    base_idx = (r - 1) * D
-                    for d in 1:D
-                        idx = base_idx + d
-                        if src_is_B1
-                            ws_B2[idx, ws_col_idx] = scaled * z[d]
-                        else
-                            ws_B1[idx, ws_col_idx] = scaled * z[d]
-                        end
-                    end
-                end
-
-                current_len *= D
-            end
-
-            last_iter_count = k - 2
-            use_B2 = (last_iter_count > 0 && isodd(last_iter_count))
-            a_prev_start = offsets[k]
-            a_tgt_start = offsets[k + 1]
-
-            for r in 1:current_len
-                src_val = use_B2 ? ws_B2[r, ws_col_idx] : ws_B1[r, ws_col_idx]
-                coeff_val = tensor_coeffs_all[a_prev_start + r, coeff_col_idx]
-                val = src_val + coeff_val
-
-                base_idx = (r - 1) * D
-                for d in 1:D
-                    idx = a_tgt_start + base_idx + d
-                    tensor_coeffs_all[idx, coeff_col_idx] += val * z[d]
-                end
-            end
-        end
-
-        start_1 = offsets[2]
-        for d in 1:D
-            tensor_coeffs_all[start_1 + d, coeff_col_idx] += z[d]
-        end
-    end
-    return nothing
-end
-
 @inline function add_scaled!(dest::Tensor{T,D,M,V1}, src::Tensor{T,D,M,V2}, α::T) where {T,D,M,V1,V2}
     off = dest.offsets
 
@@ -342,10 +250,62 @@ function update_signature_horner!(
     B1::V2,
     B2::V3
 ) where {T,D,M,V1<:AbstractVector{T},V2<:AbstractVector{T},V3<:AbstractVector{T}}
-    inv_level = [inv(T(k)) for k in 1:M]
-    coeffs_mat = reshape(A_tensor.coeffs, :, 1)
-    ws1_mat = reshape(B1, :, 1)
-    ws2_mat = reshape(B2, :, 1)
-    _horner_update_core!(coeffs_mat, ws1_mat, ws2_mat, A_tensor.offsets, inv_level, Tuple(z), Val(D), Val(M), 1, 1)
+    coeffs = A_tensor.coeffs
+    off = A_tensor.offsets
+    
+    @inbounds begin
+        for k in M:-1:2
+            inv_k = inv(T(k))
+            for d in 1:D
+                B1[d] = z[d] * inv_k
+            end
+            
+            current_len = D
+            
+            for i in 1:(k-2)
+                next_scale = inv(T(k - i))
+                a_start = off[i+1]
+                
+                src_buf = isodd(i) ? B1 : B2
+                dst_buf = isodd(i) ? B2 : B1
+                
+                for r in 1:current_len
+                    src_val = src_buf[r]
+                    coeff_val = coeffs[a_start + r]
+                    val = src_val + coeff_val
+                    scaled_val = val * next_scale
+                    
+                    base_idx = (r - 1) * D
+                    for d in 1:D
+                        dst_buf[base_idx + d] = scaled_val * z[d]
+                    end
+                end
+                
+                current_len *= D
+            end
+            
+            last_iter_count = k - 2
+            final_src_buf = (last_iter_count > 0 && isodd(last_iter_count)) ? B2 : B1
+            
+            a_prev_start = off[k-1+1]
+            a_tgt_start = off[k+1]
+            
+            for r in 1:current_len
+                src_val = final_src_buf[r]
+                coeff_val = coeffs[a_prev_start + r]
+                val = src_val + coeff_val
+                
+                base_idx = (r - 1) * D
+                for d in 1:D
+                    coeffs[a_tgt_start + base_idx + d] += val * z[d]
+                end
+            end
+        end
+        
+        start_1 = off[2]
+        for d in 1:D
+            coeffs[start_1 + d] += z[d]
+        end
+    end
     return nothing
 end

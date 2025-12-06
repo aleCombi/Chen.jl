@@ -7,13 +7,19 @@ using Random
 using Printf
 using Dates
 using BenchmarkTools
-const BENCH_SECONDS = 0.2   # target time budget per benchmarked expression
-const BENCH_SAMPLES = 20    # number of independent samples (min over samples is reported)
+using Statistics
+const BENCH_SECONDS = 1.0   # target time budget per benchmarked expression (longer for stability)
+const BENCH_SAMPLES = 50    # independent samples to aggregate (use median to avoid outliers)
+const BENCH_WARMUP  = 1     # discard this many initial samples when computing the median
 const BENCH_EVALS   = 1     # evaluations per sample (keep 1 to avoid extra GPU/CPU work per sample)
 const RECOMMENDED_THREADS = max(Threads.nthreads(), Sys.CPU_THREADS)
 const MULTITHREAD_ENABLED = Threads.nthreads() > 1
 const TARGET_THREADS = get(ENV, "BENCH_THREADS", "")
 
+# Reuse identical data across sections to avoid variance from different random draws
+const _PATH_CACHE = Dict{NTuple{4,Int},NamedTuple{(:paths_cpu, :paths_gpu)}}()
+
+# ============================================================================#
 # Optional self-reexec with a requested thread count (set BENCH_THREADS=N)
 if TARGET_THREADS != ""
     requested = tryparse(Int, TARGET_THREADS)
@@ -40,6 +46,18 @@ end
 # Helper Functions
 # ============================================================================
 
+@inline function get_paths(D::Int, M::Int, N::Int, B::Int)
+    key = (D, M, N, B)
+    if haskey(_PATH_CACHE, key)
+        return _PATH_CACHE[key]
+    end
+    paths_cpu = randn(Float32, N, D, B)
+    paths_gpu = CuArray(paths_cpu)
+    entry = (paths_cpu = paths_cpu, paths_gpu = paths_gpu)
+    _PATH_CACHE[key] = entry
+    return entry
+end
+
 function print_header(title)
     println()
     println("="^80)
@@ -53,10 +71,20 @@ function print_table_header()
     println("-"^100)
 end
 
+@inline function stable_time_ns(trial)
+    times = trial.times
+    if isempty(times)
+        return NaN
+    end
+    start_idx = min(length(times), BENCH_WARMUP + 1)
+    return Statistics.median(@view times[start_idx:end])
+end
+
 function run_benchmark(D, M, N, B; warmup=true)
-    # Generate data once (outside timings)
-    paths_cpu = randn(Float32, N, D, B)
-    paths_gpu = CuArray(paths_cpu)
+    # Generate or reuse data once (outside timings)
+    data = get_paths(D, M, N, B)
+    paths_cpu = data.paths_cpu
+    paths_gpu = data.paths_gpu
 
     if warmup
         # Warmup
@@ -74,12 +102,12 @@ function run_benchmark(D, M, N, B; warmup=true)
 
     # Benchmark CPU single-threaded
     cpu_single_trial = @benchmark sig($paths_cpu, $M; threaded=false) seconds=BENCH_SECONDS samples=BENCH_SAMPLES evals=BENCH_EVALS
-    cpu_single_time = minimum(cpu_single_trial).time / 1e9
+    cpu_single_time = stable_time_ns(cpu_single_trial) / 1e9
 
     # Benchmark CPU multi-threaded (only meaningful if Threads.nthreads() > 1)
     if MULTITHREAD_ENABLED
         cpu_threaded_trial = @benchmark sig($paths_cpu, $M; threaded=true) seconds=BENCH_SECONDS samples=BENCH_SAMPLES evals=BENCH_EVALS
-        cpu_threaded_time = minimum(cpu_threaded_trial).time / 1e9
+        cpu_threaded_time = stable_time_ns(cpu_threaded_trial) / 1e9
     else
         cpu_threaded_time = cpu_single_time
     end
@@ -89,7 +117,7 @@ function run_benchmark(D, M, N, B; warmup=true)
         sig_batch_gpu($paths_gpu, $M)
         CUDA.synchronize()
     end seconds=BENCH_SECONDS samples=BENCH_SAMPLES evals=BENCH_EVALS
-    gpu_time = minimum(gpu_trial).time / 1e9
+    gpu_time = stable_time_ns(gpu_trial) / 1e9
 
     speedup_single = cpu_single_time / gpu_time
     speedup_threaded = cpu_threaded_time / gpu_time
