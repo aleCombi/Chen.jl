@@ -251,7 +251,7 @@ function update_signature_horner!(
     B2::V3
 ) where {T,D,M,V1<:AbstractVector{T},V2<:AbstractVector{T},V3<:AbstractVector{T}}
     coeffs = A_tensor.coeffs
-    off = level_starts0(D, M)
+    off = A_tensor.offsets
     
     @inbounds begin
         for k in M:-1:2

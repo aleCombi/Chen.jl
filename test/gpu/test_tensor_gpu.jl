@@ -136,4 +136,127 @@ using Test
     end
 end
 
-println("\nGPU Tensor tests completed successfully!")
+@testset "GPU signature_path! Integration" begin
+    if !CUDA.functional()
+        @warn "CUDA not available, skipping GPU signature_path! tests"
+        return
+    end
+
+    # Test parameters
+    D, M = 2, 4
+    T = Float32
+    N = 10  # Path length
+
+    @testset "signature_path! with Matrix input on GPU" begin
+        # Create a simple path on CPU
+        path_cpu = Float32[
+            0.0 0.0;
+            1.0 0.0;
+            1.0 1.0;
+            2.0 1.0;
+            2.0 2.0;
+            3.0 2.0;
+            3.0 3.0;
+            4.0 3.0;
+            4.0 4.0;
+            5.0 5.0
+        ]
+
+        # Compute signature on CPU (reference)
+        tensor_cpu = ChenSignatures.Tensor{T, D, M}()
+        ws_cpu = ChenSignatures.SignatureWorkspace{T, D, M}()
+        ChenSignatures.signature_path!(tensor_cpu, path_cpu, ws_cpu)
+
+        # Create GPU tensor and workspace
+        coeffs_gpu = CuArray(zeros(T, length(tensor_cpu.coeffs)))
+        tensor_gpu = ChenSignatures.Tensor{T, D, M}(coeffs_gpu)
+
+        ws_len = D^(M-1)
+        B1_gpu = CUDA.zeros(T, ws_len)
+        B2_gpu = CUDA.zeros(T, ws_len)
+        ws_gpu = ChenSignatures.SignatureWorkspace{T, D, M}(B1_gpu, B2_gpu)
+
+        # Compute signature on GPU
+        CUDA.@allowscalar begin
+            ChenSignatures.signature_path!(tensor_gpu, path_cpu, ws_gpu)
+        end
+
+        # Compare results
+        coeffs_from_gpu = Array(tensor_gpu.coeffs)
+        @test coeffs_from_gpu ≈ tensor_cpu.coeffs rtol=1e-5
+
+        println("  ✓ signature_path! with Matrix input matches CPU")
+    end
+
+    @testset "signature_path! with SVector path on GPU" begin
+        # Create path as vector of SVectors
+        path_svec_cpu = [
+            SVector{D, T}(0.0f0, 0.0f0),
+            SVector{D, T}(1.0f0, 0.0f0),
+            SVector{D, T}(1.0f0, 1.0f0),
+            SVector{D, T}(2.0f0, 1.0f0),
+            SVector{D, T}(2.0f0, 2.0f0),
+            SVector{D, T}(3.0f0, 2.0f0),
+            SVector{D, T}(3.0f0, 3.0f0),
+            SVector{D, T}(4.0f0, 3.0f0),
+            SVector{D, T}(4.0f0, 4.0f0),
+            SVector{D, T}(5.0f0, 5.0f0)
+        ]
+
+        # CPU reference
+        tensor_cpu = ChenSignatures.Tensor{T, D, M}()
+        ws_cpu = ChenSignatures.SignatureWorkspace{T, D, M}()
+        ChenSignatures.signature_path!(tensor_cpu, path_svec_cpu, ws_cpu)
+
+        # GPU version
+        coeffs_gpu = CuArray(zeros(T, length(tensor_cpu.coeffs)))
+        tensor_gpu = ChenSignatures.Tensor{T, D, M}(coeffs_gpu)
+
+        ws_len = D^(M-1)
+        B1_gpu = CUDA.zeros(T, ws_len)
+        B2_gpu = CUDA.zeros(T, ws_len)
+        ws_gpu = ChenSignatures.SignatureWorkspace{T, D, M}(B1_gpu, B2_gpu)
+
+        # Compute on GPU
+        CUDA.@allowscalar begin
+            ChenSignatures.signature_path!(tensor_gpu, path_svec_cpu, ws_gpu)
+        end
+
+        # Compare
+        coeffs_from_gpu = Array(tensor_gpu.coeffs)
+        @test coeffs_from_gpu ≈ tensor_cpu.coeffs rtol=1e-5
+
+        println("  ✓ signature_path! with SVector input matches CPU")
+    end
+
+    @testset "signature_path! without workspace (allocating version)" begin
+        # Test the convenience version that auto-creates workspace
+        path_cpu = Float32[
+            0.0 0.0;
+            1.0 1.0;
+            2.0 1.0;
+            3.0 2.0
+        ]
+
+        # CPU reference
+        tensor_cpu = ChenSignatures.Tensor{T, D, M}()
+        ChenSignatures.signature_path!(tensor_cpu, path_cpu)
+
+        # GPU version with GPU tensor
+        coeffs_gpu = CuArray(zeros(T, length(tensor_cpu.coeffs)))
+        tensor_gpu = ChenSignatures.Tensor{T, D, M}(coeffs_gpu)
+
+        # This will create CPU workspace internally, but that's OK for validation
+        CUDA.@allowscalar begin
+            ChenSignatures.signature_path!(tensor_gpu, path_cpu)
+        end
+
+        # Compare
+        coeffs_from_gpu = Array(tensor_gpu.coeffs)
+        @test coeffs_from_gpu ≈ tensor_cpu.coeffs rtol=1e-5
+
+        println("  ✓ signature_path! without workspace works with GPU tensor")
+    end
+end
+
+println("\nGPU Tensor and signature_path! tests completed successfully!")

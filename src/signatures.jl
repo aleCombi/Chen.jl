@@ -1,7 +1,7 @@
 using LinearAlgebra
 using StaticArrays
 
-export sig, prepare, logsig, signature_path, SignatureWorkspace, BasisCache
+export sig, prepare, logsig, signature_path, SignatureWorkspace, BasisCache, rolling_sig
 
 # ============================================================================
 # Workspace Preallocation
@@ -40,9 +40,9 @@ end
 
 See also: [`signature_path!`](@ref)
 """
-struct SignatureWorkspace{T,D,M}
-    B1::Vector{T}
-    B2::Vector{T}
+struct SignatureWorkspace{T,D,M,V<:AbstractVector{T}}
+    B1::V
+    B2::V
 end
 
 """
@@ -54,10 +54,18 @@ Allocates scratch buffers of size `D^(M-1)` for the Horner update scheme.
 """
 function SignatureWorkspace{T,D,M}() where {T,D,M}
     max_len = M > 1 ? D^(M-1) : 1
-    return SignatureWorkspace{T,D,M}(
-        Vector{T}(undef, max_len),
-        Vector{T}(undef, max_len)
-    )
+    B1 = Vector{T}(undef, max_len)
+    B2 = Vector{T}(undef, max_len)
+    return SignatureWorkspace{T,D,M,typeof(B1)}(B1, B2)
+end
+
+"""
+    SignatureWorkspace{T,D,M}(B1::V, B2::V) where {T,D,M,V<:AbstractVector{T}}
+
+Create a workspace with specific buffer arrays (e.g., for GPU).
+"""
+function SignatureWorkspace{T,D,M}(B1::V, B2::V) where {T,D,M,V<:AbstractVector{T}}
+    return SignatureWorkspace{T,D,M,V}(B1, B2)
 end
 
 # ============================================================================
@@ -333,22 +341,22 @@ function signature_path! end
 # Simple wrappers that create workspace and delegate to the 3-arg version
 # Note: Enzyme AD on Julia 1.12 has issues with this pattern (experimental support)
 # but ChainRules/Zygote AD works fine via the rrule definition
-function signature_path!(out::Tensor{T,D,M}, path::AbstractMatrix{T}) where {T,D,M}
+function signature_path!(out::Tensor{T,D,M,V1}, path::AbstractMatrix{T}) where {T,D,M,V1}
     ws = SignatureWorkspace{T,D,M}()
     return signature_path!(out, path, ws)
 end
 
-function signature_path!(out::Tensor{T,D,M}, path::AbstractVector{SVector{D,T}}) where {T,D,M}
+function signature_path!(out::Tensor{T,D,M,V1}, path::AbstractVector{SVector{D,T}}) where {T,D,M,V1}
     ws = SignatureWorkspace{T,D,M}()
     return signature_path!(out, path, ws)
 end
 
 # Workspace-based versions (zero allocation hot path)
 function signature_path!(
-    out::Tensor{T,D,M},
+    out::Tensor{T,D,M,V1},
     path::AbstractMatrix{T},
-    ws::SignatureWorkspace{T,D,M}
-) where {T,D,M}
+    ws::SignatureWorkspace{T,D,M,V2}
+) where {T,D,M,V1,V2}
     N = size(path, 1)
     N >= 2 || throw(ArgumentError("Path must have at least 2 points, got N=$N"))
 
@@ -363,10 +371,10 @@ function signature_path!(
 end
 
 function signature_path!(
-    out::Tensor{T,D,M},
+    out::Tensor{T,D,M,V1},
     path::AbstractVector{SVector{D,T}},
-    ws::SignatureWorkspace{T,D,M}
-) where {T,D,M}
+    ws::SignatureWorkspace{T,D,M,V2}
+) where {T,D,M,V1,V2}
     N = length(path)
     N >= 2 || throw(ArgumentError("Path must have at least 2 points, got N=$N"))
 
@@ -420,8 +428,9 @@ sigs = sig(paths, 4; threaded=false)
 ```
 
 # Performance Notes
-- Uses `Threads.@threads` when `threaded=true` (default)
-- Threading overhead may not be worth it for very small batches (B < 10)
+- Uses `Threads.@threads` with static scheduling when `threaded=true` (default)
+- Each thread allocates workspace once and processes a chunk of paths
+- Threading provides speedup for larger batches (B > 100)
 - For maximum performance with manual workspace management, see [`signature_path!`](@ref)
 
 See also: [`sig`](@ref), [`logsig`](@ref), [`SignatureWorkspace`](@ref)
@@ -440,13 +449,23 @@ function sig(paths::AbstractArray{T,3}, m::Int; threaded::Bool=true) where T
     result = Matrix{T}(undef, sig_len, B)
 
     if threaded
-        Threads.@threads for i in 1:B
-            result[:, i] = sig(@view(paths[:, :, i]), m)
+        # Multi-threaded: allocate workspace once per thread, reuse across paths
+        # Use maxthreadid() to account for all possible thread IDs
+        max_tid = Threads.maxthreadid()
+        thread_workspaces = [(Tensor{T, D, m}(), SignatureWorkspace{T, D, m}()) for _ in 1:max_tid]
+
+        Threads.@threads :static for i in 1:B
+            tid = Threads.threadid()
+            out, ws = thread_workspaces[tid]
+
+            signature_path!(out, @view(paths[:, :, i]), ws)
+            result[:, i] = _flatten_tensor(out)
         end
     else
-        # Reuse workspace for sequential processing
+        # Single-threaded: reuse one tensor + workspace
         out = Tensor{T, D, m}()
-        ws = SignatureWorkspace{T, D, m}()
+        ws  = SignatureWorkspace{T, D, m}()
+
         for i in 1:B
             signature_path!(out, @view(paths[:, :, i]), ws)
             result[:, i] = _flatten_tensor(out)
@@ -455,6 +474,8 @@ function sig(paths::AbstractArray{T,3}, m::Int; threaded::Bool=true) where T
 
     return result
 end
+
+
 
 """
     logsig(paths::AbstractArray{T,3}, basis::BasisCache; threaded::Bool=true) -> Matrix{T}
@@ -530,6 +551,109 @@ function logsig(paths::AbstractArray{T,3}, basis::BasisCache; threaded::Bool=tru
             log_tensor = ChenSignatures.log(sig_tensor)
             result[:, i] = project_to_lyndon(log_tensor, basis.lynds, basis.L)
         end
+    end
+
+    return result
+end
+
+"""
+    rolling_sig(path::AbstractMatrix, m::Int, window_size::Int; stride::Int=1) -> Matrix
+
+Compute truncated path signatures over rolling windows of a time series path.
+
+This function applies a sliding window of fixed size across the path and computes
+the signature for each window position. It is particularly useful for time series
+feature extraction and forecasting applications where you need signature features
+at multiple time points.
+
+# Arguments
+- `path::AbstractMatrix{T}`: `N×d` matrix where `N ≥ 2` is the number of points and
+  `d ≥ 1` is the dimension. Each row represents a point in d-dimensional space.
+- `m::Int`: Truncation level (`m ≥ 1`). The signature will include levels 1 through `m`.
+- `window_size::Int`: Number of points per window (`2 ≤ window_size ≤ N`).
+- `stride::Int=1`: Step size between consecutive windows. Default is 1 (maximum overlap).
+
+# Returns
+- `Matrix{T}`: `S×W` matrix where `S = d + d² + ... + dᵐ` (signature dimension) and
+  `W = floor((N - window_size) / stride) + 1` (number of windows). Each column contains
+  the signature of one window.
+
+# Computational Complexity
+- Time: O(W · window_size · dᵐ⁺¹) where W is the number of windows
+- Space: O(W · dᵐ) for output storage + O(dᵐ) for workspace (constant)
+
+# Examples
+```julia
+# Time series with 100 points in 2D
+path = randn(100, 2)
+
+# Rolling signatures with window size 10, stride 1 (default)
+sigs = rolling_sig(path, 3, 10)
+size(sigs)  # (14, 91) - signature dim 14, 91 windows
+
+# Non-overlapping windows (stride = window_size)
+sigs_nonoverlap = rolling_sig(path, 3, 10; stride=10)
+size(sigs_nonoverlap)  # (14, 10)
+
+# Access signature of i-th window
+sig_window_5 = sigs[:, 5]
+
+# Use for forecasting: compute signatures up to time t
+forecast_features = rolling_sig(path[1:t, :], 4, 20)
+```
+
+# Use Cases
+- **Time series forecasting**: Extract signature features at each time point for regression
+- **Anomaly detection**: Compare signatures of current window vs historical windows
+- **Sequential pattern analysis**: Track how path signatures evolve over time
+
+# Performance Notes
+- Uses workspace preallocation for zero-allocation inner loop
+- Efficient for moderate window sizes (10-1000 points)
+- For single signature computation, use [`sig`](@ref) instead
+- For batch processing of independent paths, use the 3D batch API of [`sig`](@ref)
+
+See also: [`sig`](@ref), [`SignatureWorkspace`](@ref)
+"""
+function rolling_sig(
+    path::AbstractMatrix{T},
+    m::Int,
+    window_size::Int;
+    stride::Int = 1
+) where T
+    N, D = size(path)
+
+    # Input validation
+    N >= 2 || throw(ArgumentError("Path must have at least 2 points, got N=$N"))
+    D >= 1 || throw(ArgumentError("Path dimension must be at least 1, got D=$D"))
+    m >= 1 || throw(ArgumentError("Signature level must be at least 1, got m=$m"))
+    window_size >= 2 || throw(ArgumentError("Window size must be at least 2, got window_size=$window_size"))
+    window_size <= N || throw(ArgumentError("Window size ($window_size) cannot exceed path length ($N)"))
+    stride >= 1 || throw(ArgumentError("Stride must be at least 1, got stride=$stride"))
+
+    # Compute output dimensions
+    num_windows = div(N - window_size, stride) + 1
+    sig_len = sum(D^k for k in 1:m)
+
+    # Preallocate output and workspace
+    result = Matrix{T}(undef, sig_len, num_windows)
+    out_tensor = Tensor{T, D, m}()
+    ws = SignatureWorkspace{T, D, m}()
+
+    # Sliding window computation
+    for i in 1:num_windows
+        # Compute window indices
+        start_idx = 1 + (i - 1) * stride
+        end_idx = start_idx + window_size - 1
+
+        # Extract window using view (no copy)
+        window = @view path[start_idx:end_idx, :]
+
+        # Compute signature in-place
+        signature_path!(out_tensor, window, ws)
+
+        # Flatten and store
+        result[:, i] = _flatten_tensor(out_tensor)
     end
 
     return result
