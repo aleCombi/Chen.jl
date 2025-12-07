@@ -248,6 +248,93 @@ def rolling_sig(path, m: int, window_size: int, *, stride: int = 1, threaded: bo
     )
     return np.asarray(res)
 
+def time_augment(path, *, Tspan=1.0, times=None) -> np.ndarray:
+    """
+    Add a monotonically increasing time coordinate as the first column of the path.
+
+    Args:
+        path: Array-like of shape (N, d) or (N, d, B).
+        Tspan: Total time horizon for the implicit grid (default 1.0). Ignored when `times` is provided.
+        times: Optional length-N vector of time stamps.
+
+    Returns:
+        Array with shape (N, d+1) or (N, d+1, B).
+    """
+    arr = np.asarray(path)
+    if arr.ndim not in (2, 3):
+        raise ValueError(f"`path` must be 2D (N, d) or 3D (N, d, B); got shape {arr.shape}")
+
+    if not np.issubdtype(arr.dtype, np.floating):
+        arr = arr.astype(np.float64)
+    arr = np.ascontiguousarray(arr)
+
+    times_arr = None
+    if times is not None:
+        times_arr = np.asarray(times, dtype=arr.dtype)
+        if times_arr.shape[0] != arr.shape[0]:
+            raise ValueError(f"`times` length ({times_arr.shape[0]}) must match N={arr.shape[0]}")
+
+    res = jl.ChenSignatures.time_augment(arr, Tspan=Tspan, times=times_arr)
+    return np.asarray(res)
+
+
+def lead_lag(path) -> np.ndarray:
+    """
+    Lead–lag transform of a path.
+
+    Args:
+        path: Array-like of shape (N, d) or (N, d, B).
+
+    Returns:
+        Array with shape (2N-1, 2d) or (2N-1, 2d, B).
+    """
+    arr = np.asarray(path)
+    if arr.ndim not in (2, 3):
+        raise ValueError(f"`path` must be 2D (N, d) or 3D (N, d, B); got shape {arr.shape}")
+
+    if not np.issubdtype(arr.dtype, np.floating):
+        arr = arr.astype(np.float64)
+    arr = np.ascontiguousarray(arr)
+
+    res = jl.ChenSignatures.lead_lag(arr)
+    return np.asarray(res)
+
+
+def sig_time(path, m: int, *, Tspan=1.0, times=None, threaded: bool = True) -> np.ndarray:
+    """
+    Convenience wrapper: time-augment a path then compute its signature.
+    """
+    arr = time_augment(path, Tspan=Tspan, times=times)
+    kwargs = {"threaded": threaded} if arr.ndim == 3 else {}
+    return sig(arr, m, **kwargs)
+
+
+def sig_leadlag(path, m: int, *, threaded: bool = True) -> np.ndarray:
+    """
+    Convenience wrapper: apply lead–lag then compute signature.
+    """
+    arr = lead_lag(path)
+    kwargs = {"threaded": threaded} if arr.ndim == 3 else {}
+    return sig(arr, m, **kwargs)
+
+
+def logsig_time(path, basis, *, Tspan=1.0, times=None, threaded: bool = True) -> np.ndarray:
+    """
+    Convenience wrapper: time-augment a path then compute its log-signature.
+    """
+    arr = time_augment(path, Tspan=Tspan, times=times)
+    kwargs = {"threaded": threaded} if arr.ndim == 3 else {}
+    return logsig(arr, basis, **kwargs)
+
+
+def logsig_leadlag(path, basis, *, threaded: bool = True) -> np.ndarray:
+    """
+    Convenience wrapper: apply lead–lag then compute log-signature.
+    """
+    arr = lead_lag(path)
+    kwargs = {"threaded": threaded} if arr.ndim == 3 else {}
+    return logsig(arr, basis, **kwargs)
+
 
 # ============================================================================
 # Package metadata
@@ -259,4 +346,10 @@ __all__ = [
     'logsig',
     'prepare_logsig',
     'rolling_sig',
+    'time_augment',
+    'lead_lag',
+    'sig_time',
+    'sig_leadlag',
+    'logsig_time',
+    'logsig_leadlag',
 ]

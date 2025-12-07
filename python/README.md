@@ -41,6 +41,12 @@ signature = chen.sig(path, m=5)
 # Compute log-signature (requires prepare step)
 basis = chen.prepare_logsig(d=10, m=5)  # d must match path dimension
 logsignature = chen.logsig(path, basis)
+
+# Path augmentations (time/lead–lag) with convenience wrappers
+augmented = chen.time_augment(path, Tspan=1.0)
+leadlag = chen.lead_lag(path)
+sig_time = chen.sig_time(path, m=5)
+sig_leadlag = chen.sig_leadlag(path, m=5)
 ```
 
 ---
@@ -95,6 +101,16 @@ logsig = chen.logsig(path, basis)
 **Returns:** 1D numpy array of log-signature coefficients (Lyndon basis projection)
 
 **Note:** The `basis` object should match the dimension of your path. Prepare it once and reuse for multiple paths of the same dimension.
+
+### Path Augmentations
+
+```python
+augmented = chen.time_augment(path, Tspan=1.0)   # add time as first coordinate
+leadlag = chen.lead_lag(path)                    # standard lead–lag transform
+
+sig_time = chen.sig_time(path, m=3)              # = chen.sig(time_augment(path), 3)
+sig_leadlag = chen.sig_leadlag(path, m=3)        # = chen.sig(lead_lag(path), 3)
+```
 
 ---
 

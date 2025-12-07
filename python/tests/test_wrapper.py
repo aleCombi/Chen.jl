@@ -173,6 +173,25 @@ def test_single_path_still_works():
     assert logsig.ndim == 1, "Single path log-signature should be 1D"
 
 
+def test_time_augment_and_lead_lag():
+    """Test Python wrappers for time augmentation and lead–lag"""
+    path = np.array([[0.0], [1.0], [2.0]])
+
+    aug = chen.time_augment(path, Tspan=2.0)
+    assert aug.shape == (3, 2)
+    np.testing.assert_allclose(aug[:, 0], [0.0, 1.0, 2.0])
+    np.testing.assert_allclose(aug[:, 1], path[:, 0])
+
+    ll = chen.lead_lag(path)
+    assert ll.shape == (5, 2)
+    expected_ll = np.array([[0, 0], [0, 1], [1, 1], [1, 2], [2, 2]], dtype=ll.dtype)
+    np.testing.assert_allclose(ll, expected_ll)
+
+    sig_time = chen.sig_time(path, 2)
+    sig_manual = chen.sig(aug, 2)
+    np.testing.assert_allclose(sig_time, sig_manual)
+
+
 @pytest.mark.slow
 def test_performance():
     """Test performance on larger input (marked as slow test)"""
