@@ -11,6 +11,7 @@ include("dense_tensors.jl")
 include("lyndon_basis.jl")
 include("conversions.jl")
 include("signatures.jl")
+include("augmentations.jl")
 
 using ChainRulesCore
 using Enzyme
@@ -25,6 +26,10 @@ export sig          # Compute truncated path signature (returns flattened vector
 export logsig       # Compute log-signature projected onto Lyndon basis
 export prepare      # Precompute Lyndon basis for log-signature computations
 export rolling_sig  # Compute signatures over rolling windows of a time series path
+export time_augment # Add time as first coordinate
+export lead_lag     # Lead–lag transform (2N-1, 2D)
+export sig_time, sig_leadlag
+export logsig_time, logsig_leadlag
 #
 # Core types and lower-level API:
 export Tensor              # Dense tensor algebra representation

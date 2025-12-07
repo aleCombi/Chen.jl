@@ -11,4 +11,5 @@ using ChenSignatures
     include("test_rolling_sig.jl")
     include("test_enzyme.jl")
     include("chain_rules.jl")
+    include("test_augmentations.jl")
 end

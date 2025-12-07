@@ -10,6 +10,20 @@ These are the main user-facing functions for computing signatures and log-signat
 sig
 logsig
 prepare
+rolling_sig
+```
+
+## Path Augmentations
+
+Helpers for common path preprocessing patterns (time augmentation and lead–lag):
+
+```@docs
+time_augment
+lead_lag
+sig_time
+sig_leadlag
+logsig_time
+logsig_leadlag
 ```
 
 ## Core Types

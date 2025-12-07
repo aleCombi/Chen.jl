@@ -30,6 +30,7 @@ They form a powerful, coordinate-free representation used in:
 - **Log-Signatures:** Lyndon-projected log-signatures for minimal bases.  
 - **Tensor Algebra:** Dense and sparse tensor algebra (`SparseTensor`).  
 - **Algebraic Operations:** Shuffle product, tensor exp/log, resolvent operators.
+- **Path Augmentations:** Time augmentation and lead–lag helpers for path preprocessing.
 
 ### Performance
 - Highly optimized kernels using:
@@ -118,6 +119,12 @@ sig_result = sig(path, 4)
 # For logsig, need to prepare basis first
 basis = prepare(5, 4)  # dimension=5, level=4
 logsig_result = logsig(path, basis)
+
+# Path augmentations
+augmented = time_augment(path; Tspan=1.0)  # add time as first coordinate
+ll_path   = lead_lag(path)                 # standard lead–lag transform
+sig_time(path, 4)                          # shorthand for sig(time_augment(...), 4)
+sig_leadlag(path, 4)
 ```
 
 ---

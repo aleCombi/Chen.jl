@@ -92,6 +92,18 @@ basis = prepare(3, 4)
 logsigs = logsig(paths, basis, threaded=true)
 ```
 
+### Path Augmentations
+
+Common preprocessing steps are built in:
+
+```julia
+aug = time_augment(path; Tspan=1.0)  # add monotone time as first coordinate
+ll  = lead_lag(path)                 # standard lead–lag expansion
+
+sig_time(path, 4)      # = sig(time_augment(path), 4)
+sig_leadlag(path, 4)   # = sig(lead_lag(path), 4)
+```
+
 ---
 
 ## Python Wrapper
