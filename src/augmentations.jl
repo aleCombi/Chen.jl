@@ -193,7 +193,7 @@ end
 # -----------------------------------------------------------------------------
 function _time_grid(::Type{T}, N::Int, Tspan, times) where {T}
     if times === nothing
-        return collect(range(zero(T), stop=convert(T, Tspan), length=N))
+        return range(zero(T), stop=convert(T, Tspan), length=N)
     else
         length(times) == N || throw(ArgumentError(
             "times vector length ($(length(times))) must match path length N=$N"
