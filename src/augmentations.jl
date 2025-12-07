@@ -214,6 +214,6 @@ function _augmented_dim(path::AbstractArray{<:Any,3}; kind)
     D = size(path, 2)
     return kind === :time ? D + 1 : 2 * D
 end
-function _augmented_dim(path::AbstractVector{SVector{D}}; kind) where {D}
+function _augmented_dim(path::AbstractVector{<:SVector{D}}; kind) where {D}
     return kind === :time ? D + 1 : 2 * D
 end
