@@ -164,14 +164,38 @@ function lead_lag(path::AbstractVector{SVector{D,T}}) where {D,T}
 end
 
 # Convenience wrappers that apply augmentations before signature computation
+"""
+    sig_time(path, m::Int; kwargs...)
+
+Compute the truncated signature of a time-augmented path.
+
+Applies [`time_augment`](@ref) to prepend a time coordinate, then delegates to [`sig`](@ref).
+Keyword arguments are forwarded to `time_augment` (e.g. `Tspan`, `times`).
+"""
 function sig_time(path, m::Int; kwargs...)
     return sig(time_augment(path; kwargs...), m)
 end
 
+"""
+    sig_leadlag(path, m::Int)
+
+Compute the truncated signature of a path after applying the lead-lag transform.
+
+Calls [`lead_lag`](@ref) to duplicate coordinates using the standard scheme and then
+computes [`sig`](@ref) on the transformed path.
+"""
 function sig_leadlag(path, m::Int)
     return sig(lead_lag(path), m)
 end
 
+"""
+    logsig_time(path, basis::BasisCache; kwargs...)
+
+Log-signature of a time-augmented path using a precomputed basis.
+
+Validates that the augmented dimension matches `basis.d`, applies [`time_augment`](@ref)
+with the provided keyword arguments, and then computes [`logsig`](@ref).
+"""
 function logsig_time(path, basis::BasisCache; kwargs...)
     aug_dim = _augmented_dim(path; kind=:time)
     basis.d == aug_dim || throw(ArgumentError(
@@ -180,6 +204,14 @@ function logsig_time(path, basis::BasisCache; kwargs...)
     return logsig(time_augment(path; kwargs...), basis)
 end
 
+"""
+    logsig_leadlag(path, basis::BasisCache)
+
+Log-signature of a lead-lag transformed path using a precomputed basis.
+
+Checks that the lead-lag dimension matches `basis.d`, applies [`lead_lag`](@ref), and
+computes [`logsig`](@ref) on the augmented path.
+"""
 function logsig_leadlag(path, basis::BasisCache)
     aug_dim = _augmented_dim(path; kind=:leadlag)
     basis.d == aug_dim || throw(ArgumentError(
