@@ -37,7 +37,8 @@ using KernelAbstractions
         for i in 1:(N-1)
             # Precompute increment z = path[i+1] - path[i] ONCE
             # Store in tuple (compile-time known size D)
-            z = ntuple(d -> paths[i+1, d, batch_idx] - paths[i, d, batch_idx], Val(D))
+            # Note: @inbounds doesn't propagate into lambdas, so we add it explicitly
+            z = ntuple(d -> @inbounds(paths[i+1, d, batch_idx] - paths[i, d, batch_idx]), Val(D))
 
             # Horner update for levels M down to 2
             for k in M:-1:2
