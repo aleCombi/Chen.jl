@@ -420,8 +420,14 @@ function select_workgroup_size(backend, ::Type{T}, ws_len::Int) where T
     backend_name = string(typeof(backend).name.name)
 
     if backend_name == "CUDABackend"
-        # NVIDIA GPUs: 48KB shared memory per block (typical)
-        max_shared_mem = 48 * 1024
+        # Query actual CUDA device shared memory limit
+        max_shared_mem = try
+            CUDA = Base.require(Main, :CUDA)
+            device = CUDA.device()
+            CUDA.attribute(device, CUDA.DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK)
+        catch
+            48 * 1024  # Fallback
+        end
         preferred_sizes = [256, 128, 64, 32, 16]
     elseif backend_name == "ROCBackend"
         # AMD GPUs: 64KB LDS (Local Data Share) per workgroup
