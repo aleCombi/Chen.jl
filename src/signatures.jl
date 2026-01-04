@@ -1,7 +1,7 @@
 using LinearAlgebra
 using StaticArrays
 
-export sig, prepare, logsig, signature_path, SignatureWorkspace, BasisCache
+export sig, prepare, logsig, signature_path, SignatureWorkspace, BasisCache, rolling_sig
 
 # ============================================================================
 # Workspace Preallocation
@@ -557,65 +557,53 @@ function logsig(paths::AbstractArray{T,3}, basis::BasisCache; threaded::Bool=tru
 end
 
 """
-    rolling_sig(path::AbstractMatrix, m::Int, window_size::Int; stride::Int=1) -> Matrix
+    rolling_sig(path::AbstractMatrix, m::Int, window_size::Int; stride::Int=1, threaded::Bool=true) -> Matrix
 
-Compute truncated path signatures over rolling windows of a time series path.
-
-This function applies a sliding window of fixed size across the path and computes
-the signature for each window position. It is particularly useful for time series
-feature extraction and forecasting applications where you need signature features
-at multiple time points.
+Compute truncated path signatures over rolling windows of a time series path using the batched `sig` kernel.
 
 # Arguments
-- `path::AbstractMatrix{T}`: `N×d` matrix where `N ≥ 2` is the number of points and
-  `d ≥ 1` is the dimension. Each row represents a point in d-dimensional space.
-- `m::Int`: Truncation level (`m ≥ 1`). The signature will include levels 1 through `m`.
-- `window_size::Int`: Number of points per window (`2 ≤ window_size ≤ N`).
-- `stride::Int=1`: Step size between consecutive windows. Default is 1 (maximum overlap).
+- `path::AbstractMatrix{T}`: `N×d` matrix (`N ≥ 2`, `d ≥ 1`).
+- `m::Int`: Truncation level (`m ≥ 1`).
+- `window_size::Int`: Points per window (`2 ≤ window_size ≤ N`).
+- `stride::Int=1`: Step between consecutive windows.
+- `threaded::Bool=true`: Use the threaded batched `sig` implementation.
 
 # Returns
-- `Matrix{T}`: `S×W` matrix where `S = d + d² + ... + dᵐ` (signature dimension) and
-  `W = floor((N - window_size) / stride) + 1` (number of windows). Each column contains
-  the signature of one window.
+- `Matrix{T}` with shape `(d + d^2 + … + d^m, num_windows)` where `num_windows = div(N - window_size, stride) + 1`.
 
-# Computational Complexity
-- Time: O(W · window_size · dᵐ⁺¹) where W is the number of windows
-- Space: O(W · dᵐ) for output storage + O(dᵐ) for workspace (constant)
-
-# Examples
-```julia
-# Time series with 100 points in 2D
-path = randn(100, 2)
-
-# Rolling signatures with window size 10, stride 1 (default)
-sigs = rolling_sig(path, 3, 10)
-size(sigs)  # (14, 91) - signature dim 14, 91 windows
-
-# Non-overlapping windows (stride = window_size)
-sigs_nonoverlap = rolling_sig(path, 3, 10; stride=10)
-size(sigs_nonoverlap)  # (14, 10)
-
-# Access signature of i-th window
-sig_window_5 = sigs[:, 5]
-
-# Use for forecasting: compute signatures up to time t
-forecast_features = rolling_sig(path[1:t, :], 4, 20)
-```
-
-# Use Cases
-- **Time series forecasting**: Extract signature features at each time point for regression
-- **Anomaly detection**: Compare signatures of current window vs historical windows
-- **Sequential pattern analysis**: Track how path signatures evolve over time
-
-# Performance Notes
-- Uses workspace preallocation for zero-allocation inner loop
-- Efficient for moderate window sizes (10-1000 points)
-- For single signature computation, use [`sig`](@ref) instead
-- For batch processing of independent paths, use the 3D batch API of [`sig`](@ref)
-
-See also: [`sig`](@ref), [`SignatureWorkspace`](@ref)
+# Notes
+- Windows are aligned from the start; if (N - window_size) is not divisible by stride,
+  trailing points are dropped rather than forcing a partial window at the end.
 """
-# rolling_sig removed in this branch
+function rolling_sig(
+    path::AbstractMatrix{T},
+    m::Int,
+    window_size::Int;
+    stride::Int = 1,
+    threaded::Bool = true,
+) where T
+    N, D = size(path)
+
+    # Validation
+    N >= 2 || throw(ArgumentError("Path must have at least 2 points, got N=$N"))
+    D >= 1 || throw(ArgumentError("Path dimension must be at least 1, got D=$D"))
+    m >= 1 || throw(ArgumentError("Signature level must be at least 1, got m=$m"))
+    window_size >= 2 || throw(ArgumentError("Window size must be at least 2, got window_size=$window_size"))
+    window_size <= N || throw(ArgumentError("Window size ($window_size) cannot exceed path length ($N)"))
+    stride >= 1 || throw(ArgumentError("Stride must be at least 1, got stride=$stride"))
+
+    num_windows = div(N - window_size, stride) + 1
+
+    # Build a 3D batch of windows and reuse the batched sig implementation
+    windows = Array{T}(undef, window_size, D, num_windows)
+    for i in 1:num_windows
+        start_idx = 1 + (i - 1) * stride
+        end_idx = start_idx + window_size - 1
+        @views windows[:, :, i] .= path[start_idx:end_idx, :]
+    end
+
+    return sig(windows, m; threaded=threaded)
+end
 
 # ============================================================================
 # Internal Helper Functions

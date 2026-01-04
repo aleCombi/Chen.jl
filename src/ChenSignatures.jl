@@ -11,6 +11,7 @@ include("dense_tensors.jl")
 include("lyndon_basis.jl")
 include("conversions.jl")
 include("signatures.jl")
+include("augmentations.jl")
 
 using ChainRulesCore
 using Enzyme
@@ -28,7 +29,11 @@ include("gpu_kernels.jl")
 export sig          # Compute truncated path signature (returns flattened vector)
 export logsig       # Compute log-signature projected onto Lyndon basis
 export prepare      # Precompute Lyndon basis for log-signature computations
-# rolling_sig intentionally not exported on this branch
+export rolling_sig  # Compute signatures over rolling windows of a time series path
+export time_augment # Add time as first coordinate
+export lead_lag     # Lead–lag transform (2N-1, 2D)
+export sig_time, sig_leadlag
+export logsig_time, logsig_leadlag
 #
 # Core types and lower-level API:
 export Tensor              # Dense tensor algebra representation
@@ -38,5 +43,9 @@ export BasisCache          # Cached Lyndon basis data for logsig
 #
 # GPU acceleration (requires KernelAbstractions.jl + GPU backend):
 export sig_batch_gpu       # GPU-accelerated batch signature computation
+
+# Note: SparseTensor, Word, shuffle_product, lyndon_words, build_L, and
+# project_to_lyndon are internal implementation details and not exported.
+# Advanced users can access them via ChenSignatures.SparseTensor, etc.
 
 end # module ChenSignatures
