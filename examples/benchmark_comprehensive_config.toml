@@ -1,0 +1,46 @@
+# benchmark_comprehensive_config.toml
+# Simple knobs to control the GPU vs CPU benchmark without editing the script.
+# Override the path with BENCH_CONFIG=/path/to/config.toml if desired.
+
+# Which sections to run. Choose any of: batch, dimension, level, length, single
+sections = ["batch", "dimension", "level", "length", "single"]
+
+# Benchmark 1: batch-size sweep (D, M, N fixed)
+batch_sizes   = [100, 500, 1000, 2000, 5000, 10000, 20000]
+batch_dim     = 2
+batch_level   = 4
+batch_length  = 50
+
+# Benchmark 2: dimension sweep (B, M, N fixed)
+dimensions        = [2, 3, 4, 5]
+dimension_batch   = 5000
+dimension_level   = 4
+dimension_length  = 50
+
+# Benchmark 3: level sweep (B, D, N fixed)
+levels        = [2, 3, 4, 5]
+level_batch   = 5000
+level_dim     = 2
+level_length  = 50
+
+# Benchmark 4: path-length sweep (B, D, M fixed)
+path_lengths  = [10, 25, 50, 100, 200]
+length_batch  = 5000
+length_dim    = 2
+length_level  = 4
+
+# Benchmark 5: explicit single runs (avoids large Cartesian products)
+# Each entry is a specific (B, D, M, N) tuple; "name" is shown in output.
+[[single_runs]]
+name = "heavy_50k"
+B    = 50000
+D    = 2
+M    = 4
+N    = 200  # adjust to taste; keep moderate to avoid OOM
+
+# [[single_runs]]
+# name = "smoke_small"
+# B = 1000
+# D = 2
+# M = 3
+# N = 50

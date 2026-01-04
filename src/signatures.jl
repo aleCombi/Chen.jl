@@ -40,9 +40,9 @@ end
 
 See also: [`signature_path!`](@ref)
 """
-struct SignatureWorkspace{T,D,M}
-    B1::Vector{T}
-    B2::Vector{T}
+struct SignatureWorkspace{T,D,M,V<:AbstractVector{T}}
+    B1::V
+    B2::V
 end
 
 """
@@ -54,10 +54,18 @@ Allocates scratch buffers of size `D^(M-1)` for the Horner update scheme.
 """
 function SignatureWorkspace{T,D,M}() where {T,D,M}
     max_len = M > 1 ? D^(M-1) : 1
-    return SignatureWorkspace{T,D,M}(
-        Vector{T}(undef, max_len),
-        Vector{T}(undef, max_len)
-    )
+    B1 = Vector{T}(undef, max_len)
+    B2 = Vector{T}(undef, max_len)
+    return SignatureWorkspace{T,D,M,typeof(B1)}(B1, B2)
+end
+
+"""
+    SignatureWorkspace{T,D,M}(B1::V, B2::V) where {T,D,M,V<:AbstractVector{T}}
+
+Create a workspace with specific buffer arrays (e.g., for GPU).
+"""
+function SignatureWorkspace{T,D,M}(B1::V, B2::V) where {T,D,M,V<:AbstractVector{T}}
+    return SignatureWorkspace{T,D,M,V}(B1, B2)
 end
 
 # ============================================================================
@@ -333,22 +341,22 @@ function signature_path! end
 # Simple wrappers that create workspace and delegate to the 3-arg version
 # Note: Enzyme AD on Julia 1.12 has issues with this pattern (experimental support)
 # but ChainRules/Zygote AD works fine via the rrule definition
-function signature_path!(out::Tensor{T,D,M}, path::AbstractMatrix{T}) where {T,D,M}
+function signature_path!(out::Tensor{T,D,M,V1}, path::AbstractMatrix{T}) where {T,D,M,V1}
     ws = SignatureWorkspace{T,D,M}()
     return signature_path!(out, path, ws)
 end
 
-function signature_path!(out::Tensor{T,D,M}, path::AbstractVector{SVector{D,T}}) where {T,D,M}
+function signature_path!(out::Tensor{T,D,M,V1}, path::AbstractVector{SVector{D,T}}) where {T,D,M,V1}
     ws = SignatureWorkspace{T,D,M}()
     return signature_path!(out, path, ws)
 end
 
 # Workspace-based versions (zero allocation hot path)
 function signature_path!(
-    out::Tensor{T,D,M},
+    out::Tensor{T,D,M,V1},
     path::AbstractMatrix{T},
-    ws::SignatureWorkspace{T,D,M}
-) where {T,D,M}
+    ws::SignatureWorkspace{T,D,M,V2}
+) where {T,D,M,V1,V2}
     N = size(path, 1)
     N >= 2 || throw(ArgumentError("Path must have at least 2 points, got N=$N"))
 
@@ -363,10 +371,10 @@ function signature_path!(
 end
 
 function signature_path!(
-    out::Tensor{T,D,M},
+    out::Tensor{T,D,M,V1},
     path::AbstractVector{SVector{D,T}},
-    ws::SignatureWorkspace{T,D,M}
-) where {T,D,M}
+    ws::SignatureWorkspace{T,D,M,V2}
+) where {T,D,M,V1,V2}
     N = length(path)
     N >= 2 || throw(ArgumentError("Path must have at least 2 points, got N=$N"))
 
@@ -420,8 +428,9 @@ sigs = sig(paths, 4; threaded=false)
 ```
 
 # Performance Notes
-- Uses `Threads.@threads` when `threaded=true` (default)
-- Threading overhead may not be worth it for very small batches (B < 10)
+- Uses `Threads.@threads` with static scheduling when `threaded=true` (default)
+- Each thread allocates workspace once and processes a chunk of paths
+- Threading provides speedup for larger batches (B > 100)
 - For maximum performance with manual workspace management, see [`signature_path!`](@ref)
 
 See also: [`sig`](@ref), [`logsig`](@ref), [`SignatureWorkspace`](@ref)
@@ -440,13 +449,23 @@ function sig(paths::AbstractArray{T,3}, m::Int; threaded::Bool=true) where T
     result = Matrix{T}(undef, sig_len, B)
 
     if threaded
-        Threads.@threads for i in 1:B
-            result[:, i] = sig(@view(paths[:, :, i]), m)
+        # Multi-threaded: allocate workspace once per thread, reuse across paths
+        # Use maxthreadid() to account for all possible thread IDs
+        max_tid = Threads.maxthreadid()
+        thread_workspaces = [(Tensor{T, D, m}(), SignatureWorkspace{T, D, m}()) for _ in 1:max_tid]
+
+        Threads.@threads :static for i in 1:B
+            tid = Threads.threadid()
+            out, ws = thread_workspaces[tid]
+
+            signature_path!(out, @view(paths[:, :, i]), ws)
+            result[:, i] = _flatten_tensor(out)
         end
     else
-        # Reuse workspace for sequential processing
+        # Single-threaded: reuse one tensor + workspace
         out = Tensor{T, D, m}()
-        ws = SignatureWorkspace{T, D, m}()
+        ws  = SignatureWorkspace{T, D, m}()
+
         for i in 1:B
             signature_path!(out, @view(paths[:, :, i]), ws)
             result[:, i] = _flatten_tensor(out)
@@ -455,6 +474,8 @@ function sig(paths::AbstractArray{T,3}, m::Int; threaded::Bool=true) where T
 
     return result
 end
+
+
 
 """
     logsig(paths::AbstractArray{T,3}, basis::BasisCache; threaded::Bool=true) -> Matrix{T}
